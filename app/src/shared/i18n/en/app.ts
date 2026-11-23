@@ -285,7 +285,6 @@ export default {
     scanAgain: "Open Twinmap's settings on the computer and scan the code again.",
     // When something sent to the game cannot go.
     nothingToSend: 'There is nothing to send.',
-    gameReadOnly: 'Sending to the game is unavailable on macOS.',
     screenRecording: 'Allow Twinmap under System Settings > Privacy & Security > Screen Recording',
     cannotWrite: 'Twinmap could not write next to the addon in the game folder.',
   },
