@@ -219,6 +219,32 @@ const send = (addons: string, changed: Record<string, unknown>, fonts: boolean):
 // The addon reads news every 5 s: a pause asked again sooner would only ask the same twice.
 const PAUSE_AGAIN = 10_000
 
+// macOS window buttons (Markus, 2026-11-23): they would cover the character name in our top row,
+// so they stay hidden and fade in only while the pointer is near the top-left corner of that row,
+// centred in it. Polled in the main process: no page or preload change, and nothing on Windows.
+const MAC_BUTTON_HEIGHT = 16, MAC_CORNER_WIDTH = 96, MAC_HIDE_AFTER = 600 // px, px, ms
+const macButtonsAt = (zoom: number): { x: number; y: number } =>
+  ({ x: 14, y: Math.max(0, Math.round((WINDOW.top * zoom - MAC_BUTTON_HEIGHT) / 2)) })
+function macButtons(win: BrowserWindow): void {
+  let shown = true, hideAt = 0
+  const check = (): void => {
+    if (win.isDestroyed()) return
+    const zoom = win.webContents.getZoomFactor(), point = screen.getCursorScreenPoint(), bounds = win.getBounds()
+    const near = win.isVisible() && !win.isFullScreen()
+      && point.x >= bounds.x && point.x < bounds.x + MAC_CORNER_WIDTH * zoom
+      && point.y >= bounds.y && point.y < bounds.y + WINDOW.top * zoom
+    if (near) hideAt = Date.now() + MAC_HIDE_AFTER
+    const want = near || Date.now() < hideAt
+    if (want !== shown) {
+      win.setWindowButtonVisibility(want)
+      shown = want
+    }
+  }
+  const timer = setInterval(check, 100)
+  win.on('closed', () => clearInterval(timer))
+  check()
+}
+
 function createWindow(): void {
   // The window opens where it was closed: monitor, place, size, and maximized if it was.
   const placeFile = join(app.getPath('userData'), 'window.json')
@@ -240,8 +266,11 @@ function createWindow(): void {
     opacity: 0, // see-through until the opening screen is drawn on it: never an empty window
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#00000000', symbolColor: WINDOW.symbols, height: WINDOW.top },
+    // macOS: the three buttons sit centred in our top row (see macButtons below).
+    ...(process.platform === 'darwin' ? { trafficLightPosition: macButtonsAt(1) } : {}),
     webPreferences: { preload: join(__dirname, '../preload/index.js') },
   })
+  if (process.platform === 'darwin') macButtons(win)
   if ((saved as { maximized?: unknown } | null)?.maximized === true) win.maximize()
   // The page says when its opening screen is drawn; a page that never says so is shown all the same.
   // (A window kept hidden instead draws nothing new until it is shown, and is seen empty for a moment.)
@@ -845,6 +874,7 @@ function createWindow(): void {
     win.webContents.setZoomFactor(zoom)
     // The title bar overlay exists only on Windows; on macOS the call throws and stopped the zoom.
     if (process.platform === 'win32') win.setTitleBarOverlay({ height: Math.round(WINDOW.top * zoom) })
+    if (process.platform === 'darwin') win.setWindowButtonPosition(macButtonsAt(zoom))
   }
   const zoomTo = (zoom: unknown): void => {
     if (!ZOOMS.some((z) => z === zoom)) return
