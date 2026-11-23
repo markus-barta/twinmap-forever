@@ -30,8 +30,11 @@ const release = cf.func('void CFRelease(void *object)')
 const pidPath = proc.func('int proc_pidpath(int pid, void *buffer, uint32_t length)')
 const shmOpen = libc.func('int shm_open(const char *name, int flags, ...)')
 const shmUnlink = libc.func('int shm_unlink(const char *name)')
-const map = libc.func('void * mmap(void *address, size_t length, int protection, int flags, int fd, int64_t offset)')
-const unmap = libc.func('int munmap(void *address, size_t length)')
+// Addresses stay integers: Electron's V8 memory cage forbids external ArrayBuffers, so koffi.view()
+// over the mapping aborts the whole app (it passed under plain Node). Reads copy bytes out with memcpy.
+const map = libc.func('uintptr_t mmap(void *address, size_t length, int protection, int flags, int fd, int64_t offset)')
+const unmap = libc.func('int munmap(uintptr_t address, size_t length)')
+const copyOut = libc.func('void * memcpy(void *destination, uintptr_t source, size_t length)')
 const flock = libc.func('int flock(int fd, int operation)')
 
 const EXCLUDE_DESKTOP = 1 << 4, INCLUDING_WINDOW = 1 << 3
@@ -134,7 +137,7 @@ export function windowState(id: WindowHandle): 'gone' | 'minimized' | 'open' {
 }
 
 type Layout = { width: number; height: number; scale: number; titleBar: number }
-type Frame = Layout & { address: bigint; pixels: Buffer; top: number; confirmed: boolean; nextScan: number }
+type Frame = Layout & { address: bigint; length: number; top: number; confirmed: boolean; nextScan: number }
 type Capture = { id: WindowHandle; geometry: string; child: ChildProcess; lockFd: number; sharedFd?: number; frame?: Frame; deadline: number; idle: NodeJS.Timeout }
 
 let active: Capture | undefined
@@ -188,7 +191,7 @@ export function stopCapture(): void {
   active = undefined
   clearTimeout(current.idle)
   current.child.stdin?.end()
-  if (current.frame) unmap(current.frame.address, current.frame.pixels.length)
+  if (current.frame) unmap(current.frame.address, current.frame.length)
   if (current.sharedFd !== undefined) closeSync(current.sharedFd)
   closeSync(current.lockFd)
 }
@@ -234,9 +237,9 @@ function startCapture(id: WindowHandle, geometry: string): Capture | undefined {
           || !Number.isSafeInteger(length) || fstatSync(frameFd).size < length) {
           throw new Error('invalid shared frame layout')
         }
-        const address = map(null, length, 1, 1, frameFd, 0) as bigint | null // PROT_READ, MAP_SHARED
-        if (!address || address === 0xffff_ffff_ffff_ffffn) throw new Error('could not map the shared frame')
-        capture.frame = { width, height, scale, titleBar, address, pixels: Buffer.from(koffi.view(address, length)), top: 0, confirmed: false, nextScan: 0 }
+        const address = BigInt(map(null, length, 1, 1, frameFd, 0) as number | bigint) // PROT_READ, MAP_SHARED
+        if (address === 0n || address === 0xffff_ffff_ffff_ffffn) throw new Error('could not map the shared frame')
+        capture.frame = { width, height, scale, titleBar, address, length, top: 0, confirmed: false, nextScan: 0 }
       } catch (error) {
         problem(error instanceof Error ? error.message : String(error))
         retryCapture()
@@ -255,7 +258,10 @@ function startCapture(id: WindowHandle, geometry: string): Capture | undefined {
 }
 
 function frameRow(frame: Frame, y: number): Buffer {
-  return frame.pixels.subarray(y * frame.width * 4, (y + 1) * frame.width * 4)
+  const row = Buffer.alloc(frame.width * 4)
+  if (y < 0 || (y + 1) * row.length > frame.length) return row
+  copyOut(row, frame.address + BigInt(y * row.length), row.length)
+  return row
 }
 
 function withFrame<T>(id: WindowHandle, read: (frame: Frame, bounds: Rect) => T): T | null {

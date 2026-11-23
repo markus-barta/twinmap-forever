@@ -122,22 +122,30 @@ struct Capture {
             guard let window = content.windows.first(where: { $0.windowID == id }) else {
                 fail("ScreenCaptureKit could not find window \(id)")
             }
-            let filter = SCContentFilter(desktopIndependentWindow: window)
-            let scale = CGFloat(filter.pointPixelScale)
-            let width = Int((filter.contentRect.width * scale).rounded())
-            let height = Int((filter.contentRect.height * scale).rounded())
-            guard width > 0, height > 0 else { fail("ScreenCaptureKit returned an empty window") }
-            let fullscreen = content.displays.contains { display in
-                let bounds = CGDisplayBounds(display.displayID), frame = window.frame
-                return abs(frame.minX - bounds.minX) < 1 && abs(frame.minY - bounds.minY) < 1
-                    && abs(frame.width - bounds.width) < 1 && abs(frame.height - bounds.height) < 1
+            // A display filter that includes only the game window, cropped to the window's frame.
+            // SCContentFilter(desktopIndependentWindow:) asserts inside SkyLight
+            // (SLSGetDisplaysWithRect) for WoW in native fullscreen on macOS 27 (2026-11-23),
+            // which killed the helper on every start; the display filter has no such path.
+            let frame = window.frame
+            guard frame.width > 0, frame.height > 0 else { fail("Window \(id) has an empty frame") }
+            let onDisplays = content.displays.map { ($0, CGDisplayBounds($0.displayID).intersection(frame)) }
+                .filter { !$0.1.isNull && $0.1.width > 0 && $0.1.height > 0 }
+            guard let display = onDisplays.max(by: { $0.1.width * $0.1.height < $1.1.width * $1.1.height })?.0 else {
+                fail("Window \(id) is not on any display")
             }
+            let bounds = CGDisplayBounds(display.displayID)
+            let filter = SCContentFilter(display: display, including: [window])
+            let scale = CGFloat(filter.pointPixelScale)
+            let width = Int((frame.width * scale).rounded())
+            let height = Int((frame.height * scale).rounded())
+            guard width > 0, height > 0 else { fail("ScreenCaptureKit returned an empty window") }
+            let fullscreen = abs(frame.minX - bounds.minX) < 1 && abs(frame.minY - bounds.minY) < 1
+                && abs(frame.width - bounds.width) < 1 && abs(frame.height - bounds.height) < 1
             let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
-            let standard = window.frame.height - NSWindow.contentRect(forFrameRect: window.frame, styleMask: style).height
-            // The filter may already omit some or all of the chrome. Any strip found by
-            // Electron refines this AppKit estimate when the game uses a custom window style.
-            let excluded = max(0, window.frame.height - filter.contentRect.height)
-            let titleBar = fullscreen ? 0 : max(0, standard - excluded)
+            let standard = frame.height - NSWindow.contentRect(forFrameRect: frame, styleMask: style).height
+            // The crop is the whole window frame, chrome included. Any strip found by Electron
+            // refines this AppKit estimate when the game uses a custom window style.
+            let titleBar = fullscreen ? 0 : max(0, standard)
             let topRows = min(height, max(Int((titleBar * scale).rounded()), Int(ceil(64 * scale))) + 1)
             let layout = Layout(width: width, height: height, scale: scale, titleBar: titleBar, topRows: topRows)
             let frames = Frames(fd: fd, lockFD: 3, layout: layout)
@@ -153,6 +161,9 @@ struct Capture {
             config.shouldBeOpaque = true
             config.showsCursor = false
             config.scalesToFit = false
+            // Display-local points, the same top-left origin as CGDisplayBounds and SCWindow.frame.
+            config.sourceRect = CGRect(x: frame.minX - bounds.minX, y: frame.minY - bounds.minY,
+                                       width: frame.width, height: frame.height)
             config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
             config.queueDepth = 3
             let stream = SCStream(filter: filter, configuration: config, delegate: frames)

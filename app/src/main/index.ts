@@ -843,7 +843,8 @@ function createWindow(): void {
   const showZoom = (): void => {
     const zoom = settings.zoom ?? 1
     win.webContents.setZoomFactor(zoom)
-    win.setTitleBarOverlay({ height: Math.round(WINDOW.top * zoom) })
+    // The title bar overlay exists only on Windows; on macOS the call throws and stopped the zoom.
+    if (process.platform === 'win32') win.setTitleBarOverlay({ height: Math.round(WINDOW.top * zoom) })
   }
   const zoomTo = (zoom: unknown): void => {
     if (!ZOOMS.some((z) => z === zoom)) return
