@@ -124,7 +124,7 @@ struct Capture {
             }
             // A display filter that includes only the game window, cropped to the window's frame.
             // SCContentFilter(desktopIndependentWindow:) asserts inside SkyLight
-            // (SLSGetDisplaysWithRect) for WoW in native fullscreen on macOS 27 (2026-11-23),
+            // (SLSGetDisplaysWithRect) for WoW in native fullscreen on macOS 27,
             // which killed the helper on every start; the display filter has no such path.
             let frame = window.frame
             guard frame.width > 0, frame.height > 0 else { fail("Window \(id) has an empty frame") }

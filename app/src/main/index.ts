@@ -219,7 +219,7 @@ const send = (addons: string, changed: Record<string, unknown>, fonts: boolean):
 // The addon reads news every 5 s: a pause asked again sooner would only ask the same twice.
 const PAUSE_AGAIN = 10_000
 
-// macOS window buttons (Markus, 2026-11-23): they would cover the character name in our top row,
+// macOS window buttons: they would cover the character name in our top row,
 // so they stay hidden and fade in only while the pointer is near the top-left corner of that row,
 // centred in it. Polled in the main process: no page or preload change, and nothing on Windows.
 const MAC_BUTTON_HEIGHT = 16, MAC_CORNER_WIDTH = 96, MAC_HIDE_AFTER = 600 // px, px, ms
