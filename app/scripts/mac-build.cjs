@@ -8,19 +8,26 @@ const app = join(__dirname, '..')
 const bundle = join(app, 'dist', 'mac-arm64', 'Twinmap.app')
 const run = (cmd, args) => execFileSync(cmd, args, { stdio: 'inherit' })
 
-// A Mach-O file outside the places `codesign --deep` covers, e.g. koffi's .node in app.asar.unpacked.
+// Every Mach-O file and every nested bundle in the app, deepest first. codesign --deep misses loose
+// binaries inside frameworks (Electron's Libraries/*.dylib, Squirrel's ShipIt) and koffi's .node, and
+// notarization rejects any of them without a Developer ID signature, timestamp and hardened runtime.
 const MACHO = new Set(['cffaedfe', 'cefaedfe', 'cafebabe', 'bebafeca'])
-function looseBinaries(dir, found = []) {
+const depth = (path) => path.split('/').length
+function codeIn(dir, files = [], bundles = []) {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name), stat = lstatSync(path)
     if (stat.isSymbolicLink()) continue
-    if (stat.isDirectory()) { if (!/\.(app|framework)$/.test(name)) looseBinaries(path, found); continue }
+    if (stat.isDirectory()) {
+      if (/\.(app|framework)$/.test(name)) bundles.push(path)
+      codeIn(path, files, bundles)
+      continue
+    }
     if (stat.size < 4) continue
     const fd = openSync(path, 'r'), head = Buffer.alloc(4)
     readSync(fd, head, 0, 4, 0); closeSync(fd)
-    if (MACHO.has(head.toString('hex'))) found.push(path)
+    if (MACHO.has(head.toString('hex'))) files.push(path)
   }
-  return found
+  return { files, bundles }
 }
 
 if (process.argv[2] === 'sign') {
@@ -32,9 +39,12 @@ if (process.argv[2] === 'sign') {
     run('codesign', ['--force', '--deep', '--sign', '-', bundle])
   } else {
     // Notarization needs the hardened runtime and a secure timestamp on every binary, inside out.
-    const flags = ['--force', '--options', 'runtime', '--timestamp', '--entitlements', join(app, 'build', 'entitlements.mac.plist'), '--sign', identity]
-    for (const file of looseBinaries(join(bundle, 'Contents', 'Resources'))) run('codesign', [...flags, file])
-    run('codesign', [...flags, '--deep', bundle])
+    const flags = ['--force', '--options', 'runtime', '--timestamp', '--sign', identity]
+    const jit = ['--entitlements', join(app, 'build', 'entitlements.mac.plist')] // apps only: Electron's V8
+    const { files, bundles } = codeIn(join(bundle, 'Contents'))
+    for (const path of [...files.sort((a, b) => depth(b) - depth(a)), ...bundles.sort((a, b) => depth(b) - depth(a)), bundle]) {
+      run('codesign', [...flags, ...(path.endsWith('.app') ? jit : []), path])
+    }
   }
   run('codesign', ['--verify', '--deep', '--strict', bundle])
   // TWINMAP_MAC_NOTARY_PROFILE: a notarytool keychain profile (xcrun notarytool store-credentials). The secret
