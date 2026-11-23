@@ -122,7 +122,9 @@ function windowInfo(id: WindowHandle): WindowRecord | undefined {
   const window = windows(id)[0]
   const display = window?.onScreen ? screen.getDisplayMatching(window.bounds) : undefined
   const geometry = window && display
-    ? `${window.pid}:${window.bounds.width}:${window.bounds.height}:${display.id}:${display.scaleFactor}`
+    // The position is part of it: the helper crops the display to the window's frame at start,
+    // so a moved window needs a new crop (the restart waits for RESIZE_SETTLE, as for a resize).
+    ? `${window.pid}:${window.bounds.x}:${window.bounds.y}:${window.bounds.width}:${window.bounds.height}:${display.id}:${display.scaleFactor}`
     : undefined
   const previous = checked?.id === id ? checked : undefined
   const changed = previous?.geometry && geometry && previous.geometry !== geometry

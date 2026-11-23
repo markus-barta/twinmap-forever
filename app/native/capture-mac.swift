@@ -158,6 +158,9 @@ struct Capture {
             config.colorSpaceName = CGColorSpace.sRGB
             config.ignoreShadowsSingleWindow = true
             config.ignoreGlobalClipSingleWindow = true
+            // The display filter clips at the display edge unless told not to (default false):
+            // a window that hangs off the screen or spans displays would lose strip pixels.
+            config.ignoreGlobalClipDisplay = true
             config.shouldBeOpaque = true
             config.showsCursor = false
             config.scalesToFit = false
