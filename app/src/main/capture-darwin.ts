@@ -1,9 +1,10 @@
-// Window discovery is in Quartz. A ScreenCaptureKit helper streams one window into a shared BGRA
-// buffer, so reading a strip never waits for WindowServer or copies the rest of the frame.
+// Window discovery is in Quartz. ScreenCaptureKit publishes live strip rows and slower full snapshots
+// into a shared BGRA buffer so readers can pick up pixels without waiting for WindowServer.
 import { spawn, type ChildProcess } from 'node:child_process'
-import { closeSync, fstatSync, mkdtempSync, openSync, rmdirSync, unlinkSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { closeSync, constants, fstatSync, lstatSync, mkdtempSync, openSync, readdirSync, rmdirSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { app, screen } from 'electron'
 import koffi from 'koffi'
@@ -27,12 +28,16 @@ const stringSize = cf.func('long CFStringGetLength(void *string)')
 const stringRead = cf.func('bool CFStringGetCString(void *string, void *buffer, long length, uint32_t encoding)')
 const release = cf.func('void CFRelease(void *object)')
 const pidPath = proc.func('int proc_pidpath(int pid, void *buffer, uint32_t length)')
+const shmOpen = libc.func('int shm_open(const char *name, int flags, ...)')
+const shmUnlink = libc.func('int shm_unlink(const char *name)')
 const map = libc.func('void * mmap(void *address, size_t length, int protection, int flags, int fd, int64_t offset)')
 const unmap = libc.func('int munmap(void *address, size_t length)')
 const flock = libc.func('int flock(int fd, int operation)')
 
 const EXCLUDE_DESKTOP = 1 << 4, INCLUDING_WINDOW = 1 << 3
 const SHARED = 1, NONBLOCKING = 4, UNLOCK = 8
+const RESIZE_SETTLE = 500, IDLE_AFTER = 3000 // ms
+const TEMP_PREFIX = 'twinmap-capture-'
 const UTF8 = 0x08000100
 const key = (name: string): bigint => koffi.decode(cg.symbol(name), 'void *')
 const keys = {
@@ -107,7 +112,7 @@ export const captureAllowed = (): boolean => preflight()
 
 // Quartz calls are shared by windowState, readRow and the occasional rectangle. Recheck often
 // enough to notice a resize or display change, without querying WindowServer every 15 ms.
-let checked: { id: WindowHandle; until: number; window?: WindowRecord; geometry?: string } | undefined
+let checked: { id: WindowHandle; until: number; readyAt: number; window?: WindowRecord; geometry?: string } | undefined
 function windowInfo(id: WindowHandle): WindowRecord | undefined {
   const now = performance.now()
   if (checked?.id === id && checked.until > now) return checked.window
@@ -116,7 +121,9 @@ function windowInfo(id: WindowHandle): WindowRecord | undefined {
   const geometry = window && display
     ? `${window.pid}:${window.bounds.width}:${window.bounds.height}:${display.id}:${display.scaleFactor}`
     : undefined
-  checked = { id, until: now + 100, window, geometry }
+  const previous = checked?.id === id ? checked : undefined
+  const changed = previous?.geometry && geometry && previous.geometry !== geometry
+  checked = { id, until: now + 100, readyAt: changed ? now + RESIZE_SETTLE : previous?.readyAt ?? 0, window, geometry }
   return window
 }
 
@@ -128,11 +135,12 @@ export function windowState(id: WindowHandle): 'gone' | 'minimized' | 'open' {
 
 type Layout = { width: number; height: number; scale: number; titleBar: number }
 type Frame = Layout & { address: bigint; pixels: Buffer; top: number; confirmed: boolean; nextScan: number }
-type Capture = { id: WindowHandle; geometry: string; child: ChildProcess; fd: number; path: string; dir: string; frame?: Frame; deadline: number }
+type Capture = { id: WindowHandle; geometry: string; child: ChildProcess; lockFd: number; sharedFd?: number; frame?: Frame; deadline: number; idle: NodeJS.Timeout }
 
 let active: Capture | undefined
 let retryAt = 0
 let lastProblem = ''
+let swept = false
 
 function problem(message: string): void {
   if (lastProblem === message) return
@@ -140,10 +148,33 @@ function problem(message: string): void {
   console.error(`Twinmap capture: ${message}`)
 }
 
-function forgetFile(path: string, dir: string): void {
-  // Once both processes have opened the file, only their descriptors keep it alive.
-  try { unlinkSync(path) } catch {}
+function forgetFile(dir: string): void {
+  try { unlinkSync(join(dir, 'frame')) } catch {}
   try { rmdirSync(dir) } catch {}
+}
+
+function sweepStaleFrames(folder: string): void {
+  if (swept) return
+  swept = true
+  let names: string[]
+  try { names = readdirSync(folder) } catch { return }
+  const cutoff = Date.now() - 60_000 // give another app instance time to open its descriptors
+  for (const name of names) {
+    if (!/^twinmap-capture-[a-zA-Z0-9]{6}$/.test(name)) continue
+    const dir = join(folder, name)
+    try {
+      const entry = lstatSync(dir)
+      if (entry.isDirectory() && entry.uid === process.getuid?.() && entry.mtimeMs < cutoff) forgetFile(dir)
+    } catch {} // another instance may have cleaned up
+  }
+}
+
+function openSharedMemory(): number | undefined {
+  const name = '/twinmap-' + randomBytes(8).toString('hex')
+  const fd = shmOpen(name, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 'int', 0o600)
+  if (fd < 0) return
+  if (shmUnlink(name) === 0) return fd
+  closeSync(fd)
 }
 
 function retryCapture(): void {
@@ -155,40 +186,55 @@ export function stopCapture(): void {
   const current = active
   if (!current) return
   active = undefined
+  clearTimeout(current.idle)
   current.child.stdin?.end()
   if (current.frame) unmap(current.frame.address, current.frame.pixels.length)
-  closeSync(current.fd)
-  forgetFile(current.path, current.dir)
+  if (current.sharedFd !== undefined) closeSync(current.sharedFd)
+  closeSync(current.lockFd)
 }
 
 function startCapture(id: WindowHandle, geometry: string): Capture | undefined {
-  const helper = app.isPackaged ? join(process.resourcesPath, '..', 'Helpers', 'twinmap-capture') : resolve('dist-native/twinmap-capture')
-  let dir: string | undefined, fd: number | undefined
+  const helper = app.isPackaged ? join(process.resourcesPath, '..', 'Helpers', 'twinmap-capture') : join(app.getAppPath(), 'dist-native', 'twinmap-capture')
+  const folder = tmpdir()
+  sweepStaleFrames(folder)
+  let dir: string | undefined, lockFd: number | undefined, writer: number | undefined, sharedFd: number | undefined
   try {
-    dir = mkdtempSync(join(tmpdir(), 'twinmap-capture-'))
+    dir = mkdtempSync(join(folder, TEMP_PREFIX))
     const path = join(dir, 'frame')
-    fd = openSync(path, 'wx+', 0o600)
-    const child = spawn(helper, [String(id), path], { stdio: ['pipe', 'pipe', 'pipe'] })
-    const capture: Capture = { id, geometry, child, fd, path, dir, deadline: performance.now() + 5000 }
-    child.stdin.on('error', () => {}) // the helper can reject a window before we close its pipe
+    // Separate opens make flock work across processes. This file also backs the mapping if shm_open is denied.
+    lockFd = openSync(path, 'wx+', 0o600)
+    writer = openSync(path, 'r+')
+    unlinkSync(path)
+    rmdirSync(dir)
+    dir = undefined
+    sharedFd = openSharedMemory()
+    const frameFd = sharedFd ?? lockFd
+    const child = spawn(helper, [String(id), sharedFd === undefined ? '3' : '4'], {
+      stdio: ['pipe', 'pipe', 'pipe', writer, sharedFd ?? 'ignore'],
+    })
+    const capture: Capture = {
+      id, geometry, child, lockFd, sharedFd, deadline: performance.now() + 5000,
+      idle: setTimeout(stopCapture, IDLE_AFTER).unref(),
+    }
+    child.stdin!.on('error', () => {}) // the helper can reject a window before we close its pipe
     child.once('error', (error) => problem(error.message))
     child.once('close', () => {
       if (active !== capture) return
       retryCapture()
     })
-    createInterface({ input: child.stderr }).on('line', problem)
-    createInterface({ input: child.stdout }).once('line', (line) => {
+    createInterface({ input: child.stderr! }).on('line', problem)
+    createInterface({ input: child.stdout! }).once('line', (line) => {
       if (active !== capture) return
-      forgetFile(path, capture.dir)
       try {
-        const { width, height, scale, titleBar } = JSON.parse(line) as Layout
-        const length = width * height * 4
-        if (![width, height].every((value) => Number.isSafeInteger(value) && value > 0)
+        const { width, height, scale, titleBar, topRows } = JSON.parse(line) as Layout & { topRows: number }
+        const length = width * (height + 1 + topRows) * 4
+        if (![width, height, topRows].every((value) => Number.isSafeInteger(value) && value > 0)
           || !Number.isFinite(scale) || scale <= 0 || !Number.isFinite(titleBar) || titleBar < 0
-          || !Number.isSafeInteger(length) || fstatSync(capture.fd).size !== length) {
+          || topRows !== Math.min(height, Math.max(Math.round(titleBar * scale), Math.ceil(64 * scale)) + 1)
+          || !Number.isSafeInteger(length) || fstatSync(frameFd).size < length) {
           throw new Error('invalid shared frame layout')
         }
-        const address = map(null, length, 1, 1, capture.fd, 0) as bigint | null // PROT_READ, MAP_SHARED
+        const address = map(null, length, 1, 1, frameFd, 0) as bigint | null // PROT_READ, MAP_SHARED
         if (!address || address === 0xffff_ffff_ffff_ffffn) throw new Error('could not map the shared frame')
         capture.frame = { width, height, scale, titleBar, address, pixels: Buffer.from(koffi.view(address, length)), top: 0, confirmed: false, nextScan: 0 }
       } catch (error) {
@@ -198,10 +244,13 @@ function startCapture(id: WindowHandle, geometry: string): Capture | undefined {
     })
     return capture
   } catch (error) {
-    if (fd !== undefined) closeSync(fd)
-    if (dir) forgetFile(join(dir, 'frame'), dir)
+    if (sharedFd !== undefined) closeSync(sharedFd)
+    if (lockFd !== undefined) closeSync(lockFd)
+    if (dir) forgetFile(dir)
     problem(error instanceof Error ? error.message : String(error))
     return undefined
+  } finally {
+    if (writer !== undefined) closeSync(writer)
   }
 }
 
@@ -215,29 +264,32 @@ function withFrame<T>(id: WindowHandle, read: (frame: Frame, bounds: Rect) => T)
     if (active?.id === id) stopCapture()
     return null
   }
-  const { bounds } = window, now = performance.now(), geometry = checked?.geometry
-  if (!geometry) return null
+  const { bounds } = window, now = performance.now(), info = checked
+  if (!info?.geometry) return null
+  const { geometry, readyAt } = info
   if (active && (active.id !== id || active.geometry !== geometry)) stopCapture()
   if (active && !active.frame && now >= active.deadline) {
     problem('ScreenCaptureKit did not deliver a frame within 5 seconds')
     retryCapture()
   }
-  if (!active && now >= retryAt) {
+  if (!active && now >= Math.max(retryAt, readyAt)) {
     if (captureAllowed()) active = startCapture(id, geometry)
     if (!active) retryAt = now + 3000
   }
-  const frame = active?.frame
-  if (!active || !frame || flock(active.fd, SHARED | NONBLOCKING) !== 0) return null
+  if (!active) return null
+  const { frame, lockFd, idle } = active
+  idle.refresh()
+  if (!frame || flock(lockFd, SHARED | NONBLOCKING) !== 0) return null
   try {
     if (!frame.confirmed && now >= frame.nextScan) {
-      const offset = contentTop(frame, (y) => frameRow(frame, y))
+      const offset = contentTop(frame, (y) => frameRow(frame, frame.height + 1 + y))
       frame.top = offset.top
       frame.confirmed = offset.confirmed
       frame.nextScan = now + 150
     }
     return read(frame, bounds)
   } finally {
-    flock(active.fd, UNLOCK)
+    flock(lockFd, UNLOCK)
   }
 }
 
@@ -268,4 +320,4 @@ export const showsOnly = (id: WindowHandle, x: number, y: number, size: number):
   withFrame(id, (frame) => inContent(frame, x, y, size, size)) ?? false
 
 export const readRow = (id: WindowHandle, edge: 'top' | 'bottom' = 'top'): Buffer | null =>
-  withFrame(id, (frame) => Buffer.from(frameRow(frame, edge === 'top' ? frame.top : frame.height - 1)))
+  withFrame(id, (frame) => Buffer.from(frameRow(frame, edge === 'top' ? frame.height + 1 + frame.top : frame.height)))

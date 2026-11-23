@@ -8,6 +8,8 @@ const { setTimeout: sleep } = require('node:timers/promises')
 const assert = require('node:assert/strict')
 const { narrow } = require('../src/shared/strips.fixture.json')
 
+// Electron treats the script's directory as the app root when invoked directly.
+app.setAppPath(join(__dirname, '..'))
 registerHooks({
   resolve(specifier, context, next) {
     if (context.parentURL?.endsWith('.ts') && specifier.startsWith('.') && existsSync(new URL(specifier + '.ts', context.parentURL))) {

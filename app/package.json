@@ -40,6 +40,7 @@
     },
     "mac": {
       "category": "public.app-category.games",
+      "minimumSystemVersion": "14.0",
       "extendInfo": {
         "NSScreenCaptureUsageDescription": "Twinmap reads the addon's pixel strip from the World of Warcraft window."
       },

@@ -46,7 +46,7 @@ import type { Listing } from '../shared/ah'
 
 // macOS reads the game and its addon without installing or writing to the addon's inbox.
 const WRITE_GAME = process.platform !== 'darwin'
-const captureReady = loadCapture()
+const captureReady = loadCapture().catch((error) => `capture: ${describe(error)}`)
 
 const SHOW_EVERY = 50 // ms between updates of the window: a position must be there well before the arrow needs it (BEHIND in glide.ts)
 const LOG_EVERY = 5000 // ms between writes of the measures
@@ -1026,12 +1026,22 @@ function createWindow(): void {
   })
 }
 
-// The shipped app has no menu: with no title bar there is no place for one, and Alt must not bring one up.
-if (app.isPackaged) Menu.setApplicationMenu(null)
+// The shipped Windows app has no menu, and Alt must not bring one up.
+if (process.platform !== 'darwin' && app.isPackaged) Menu.setApplicationMenu(null)
 
 // A newer version of the app, if there is one, comes first: see update.ts.
-void Promise.all([captureReady, app.whenReady()]).then(() => {
+void Promise.all([captureReady, app.whenReady()]).then(([captureError]) => {
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { label: app.name, submenu: [{ role: 'about' }, { role: 'hide' }, { role: 'quit' }] },
+      { label: 'Edit', submenu: [
+        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+      ] },
+    ]))
+  }
   record.say(`started: Twinmap ${app.getVersion()}${GPU ? '' : ', hardware acceleration off'}`)
+  if (captureError) record.say(captureError)
   if (!captureAllowed()) record.say(t('app.main.screenRecording'))
   updateFirst(createWindow, (line) => record.say(`update: ${line}`))
 })

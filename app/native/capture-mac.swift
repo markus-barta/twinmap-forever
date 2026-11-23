@@ -14,24 +14,27 @@ private struct Layout: Encodable {
     let height: Int
     let scale: CGFloat
     let titleBar: CGFloat
+    let topRows: Int
 }
 
-// Electron reads only the requested pixels from the last complete frame. Separate opens of the
-// same file let flock protect the frame across processes. Neither side waits for the other's lock.
+// The mapping holds a full snapshot, followed by the live bottom row and top search band.
+// Separate opens of the lock file let flock protect both views without either process waiting.
 private final class Frames: NSObject, SCStreamOutput, SCStreamDelegate {
-    private let fd: Int32
+    let queue = DispatchQueue(label: "twinmap.capture.frames")
+    private let lockFD: Int32
     private let pixels: UnsafeMutableRawPointer
     private let layout: Layout
     private var announced = false
+    private var pendingSnapshot: CVPixelBuffer?
 
-    init(path: String, layout: Layout) {
-        let bytes = layout.width * layout.height * 4
-        fd = open(path, O_RDWR)
-        guard fd >= 0, ftruncate(fd, off_t(bytes)) == 0,
+    init(fd: Int32, lockFD: Int32, layout: Layout) {
+        let bytes = layout.width * (layout.height + 1 + layout.topRows) * 4
+        guard ftruncate(fd, off_t(bytes)) == 0,
             let mapped = mmap(nil, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0),
             mapped != MAP_FAILED else { fail("Could not allocate the shared capture frame (errno \(errno))") }
         self.pixels = mapped
         self.layout = layout
+        self.lockFD = lockFD
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -45,24 +48,58 @@ private final class Frames: NSObject, SCStreamOutput, SCStreamDelegate {
             status == SCFrameStatus.complete.rawValue || status == SCFrameStatus.started.rawValue,
             let image = sample.imageBuffer,
             CVPixelBufferGetWidth(image) == layout.width,
-            CVPixelBufferGetHeight(image) == layout.height,
-            CVPixelBufferLockBaseAddress(image, .readOnly) == kCVReturnSuccess else { return }
-        defer { CVPixelBufferUnlockBaseAddress(image, .readOnly) }
-        guard let source = CVPixelBufferGetBaseAddress(image), flock(fd, LOCK_EX | LOCK_NB) == 0 else { return }
-        let stride = CVPixelBufferGetBytesPerRow(image), row = layout.width * 4
-        if stride == row {
-            memcpy(pixels, source, row * layout.height)
-        } else {
-            for y in 0..<layout.height { memcpy(pixels + y * row, source + y * stride, row) }
+            CVPixelBufferGetHeight(image) == layout.height else { return }
+        publish(image)
+    }
+
+    private func publish(_ image: CVPixelBuffer) {
+        if announced {
+            _ = copy(image, live: true, snapshot: false)
+            let needsTimer = pendingSnapshot == nil
+            pendingSnapshot = image
+            // Publish the latest change even if the window goes static before the timer fires.
+            if needsTimer { publishSnapshot(after: .milliseconds(200)) }
+            return
         }
-        flock(fd, LOCK_UN)
+        guard copy(image, live: true, snapshot: true) else { return }
+        announced = true
         // The pipe announces one layout, after pixels exist. It carries no image data.
-        if !announced {
-            announced = true
-            guard var message = try? JSONEncoder().encode(layout) else { fail("Could not encode the capture layout") }
-            message.append(10)
-            FileHandle.standardOutput.write(message)
+        guard var message = try? JSONEncoder().encode(layout) else { fail("Could not encode the capture layout") }
+        message.append(10)
+        FileHandle.standardOutput.write(message)
+    }
+
+    private func publishSnapshot(after delay: DispatchTimeInterval) {
+        queue.asyncAfter(deadline: .now() + delay) { [self] in
+            guard let image = pendingSnapshot else { return }
+            if copy(image, live: false, snapshot: true) {
+                pendingSnapshot = nil
+            } else {
+                publishSnapshot(after: .milliseconds(15))
+            }
         }
+    }
+
+    private func copy(_ image: CVPixelBuffer, live: Bool, snapshot: Bool) -> Bool {
+        guard CVPixelBufferLockBaseAddress(image, .readOnly) == kCVReturnSuccess else { return false }
+        defer { CVPixelBufferUnlockBaseAddress(image, .readOnly) }
+        guard let source = CVPixelBufferGetBaseAddress(image), flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { return false }
+        let stride = CVPixelBufferGetBytesPerRow(image), row = layout.width * 4
+        func copyRows(_ count: Int, to destination: UnsafeMutableRawPointer) {
+            if stride == row {
+                memcpy(destination, source, row * count)
+            } else {
+                for y in 0..<count { memcpy(destination + y * row, source + y * stride, row) }
+            }
+        }
+        if snapshot { copyRows(layout.height, to: pixels) }
+        if live {
+            let rows = pixels + row * layout.height
+            memcpy(rows, source + stride * (layout.height - 1), row)
+            copyRows(layout.topRows, to: rows + row)
+        }
+        flock(lockFD, LOCK_UN)
+        return true
     }
 }
 
@@ -71,7 +108,9 @@ struct Capture {
     @MainActor
     static func main() async {
         let args = CommandLine.arguments
-        guard args.count == 3, let id = CGWindowID(args[1]) else { fail("Expected a window ID and a shared frame path") }
+        guard args.count == 3, let id = CGWindowID(args[1]), let fd = Int32(args[2]) else {
+            fail("Expected a window ID and a shared frame descriptor")
+        }
         // EOF also stops the stream when Electron crashes or is terminated.
         DispatchQueue.global().async {
             var byte: UInt8 = 0
@@ -98,8 +137,10 @@ struct Capture {
             // The filter may already omit some or all of the chrome. Any strip found by
             // Electron refines this AppKit estimate when the game uses a custom window style.
             let excluded = max(0, window.frame.height - filter.contentRect.height)
-            let layout = Layout(width: width, height: height, scale: scale, titleBar: fullscreen ? 0 : max(0, standard - excluded))
-            let frames = Frames(path: args[2], layout: layout)
+            let titleBar = fullscreen ? 0 : max(0, standard - excluded)
+            let topRows = min(height, max(Int((titleBar * scale).rounded()), Int(ceil(64 * scale))) + 1)
+            let layout = Layout(width: width, height: height, scale: scale, titleBar: titleBar, topRows: topRows)
+            let frames = Frames(fd: fd, lockFD: 3, layout: layout)
 
             let config = SCStreamConfiguration()
             config.width = width
@@ -115,7 +156,7 @@ struct Capture {
             config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
             config.queueDepth = 3
             let stream = SCStream(filter: filter, configuration: config, delegate: frames)
-            try stream.addStreamOutput(frames, type: .screen, sampleHandlerQueue: DispatchQueue(label: "twinmap.capture.frames"))
+            try stream.addStreamOutput(frames, type: .screen, sampleHandlerQueue: frames.queue)
             try await stream.startCapture()
             // Keep the stream and its output alive while the parent holds the pipe open.
             while true {
