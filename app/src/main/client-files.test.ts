@@ -218,6 +218,13 @@ test('the game folder is found from a path inside it, and only if it holds Forev
 })
 
 // On a PC with the game: the real archive. UiMap is the table of the 60 maps; 1957206 is its file number.
+test.skipIf(process.platform === 'win32')('finds the game folder from inside the native app bundle', () => {
+  const folder = fakeClient([], 2)
+  const executable = join(folder, '_forever_', 'World of Warcraft.app', 'Contents', 'MacOS', 'World of Warcraft')
+  expect(gameFolderFrom([executable])).toBe(folder)
+  expect(gameFolderFrom([join(folder, 'Data'), executable])).toBe(folder)
+})
+
 const real = gameFolderFrom([registryInstallPath()])
 test.skipIf(!real)('the real game opens and gives UiMap in under two seconds', () => {
   const started = performance.now()

@@ -18,9 +18,9 @@ import { feedbackLink, sendFeedback } from '../shared/feedback'
 import { pageOf, setupComplete, setupPages, type SetupStatus } from '../shared/setup'
 import { tilesLine, type TilesStatus } from '../shared/tiles-status'
 import { placeWindow, WINDOW, ZOOMS, zoomStep } from '../shared/window'
-import { findGameWindow, programOf } from './capture'
+import { captureAllowed, findGameWindow, loadCapture, programOf, stopCapture } from './capture'
 import { readHdr } from './hdr'
-import { gameFolderFrom, installedBuild, registryInstallPath } from './client-files'
+import { gameFolderFrom, gameInstallPaths, installedBuild } from './client-files'
 import { homeAddress, LAN_PORT, startLan, type Lan, type Served } from './lan'
 import { startLink } from './link'
 import { startBosses } from './bosses'
@@ -44,6 +44,10 @@ import { startPrices } from './prices'
 import { startAlerts } from './alerts'
 import type { Listing } from '../shared/ah'
 
+// macOS reads the game and its addon without installing or writing to the addon's inbox.
+const WRITE_GAME = process.platform !== 'darwin'
+const captureReady = loadCapture()
+
 const SHOW_EVERY = 50 // ms between updates of the window: a position must be there well before the arrow needs it (BEHIND in glide.ts)
 const LOG_EVERY = 5000 // ms between writes of the measures
 const SHOW_AFTER = 3000 // ms after which the window shows itself even if its page has not said it is drawn
@@ -63,7 +67,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'twinmap', privileges: { standar
 function findGameFolder(picked: string | undefined): string | null {
   if (process.env.TWINMAP_GAME !== undefined) return gameFolderFrom([process.env.TWINMAP_GAME])
   const running = findGameWindow()
-  return gameFolderFrom([picked ?? null, running === null ? null : programOf(running), registryInstallPath()])
+  return gameFolderFrom([picked ?? null, running === null ? null : programOf(running), ...gameInstallPaths()])
 }
 
 // Makes the map tiles from the game's files, once per build of the game, and keeps the latest word on it.
@@ -319,7 +323,7 @@ function createWindow(): void {
   // ask, so that an ask after a /reload is news; false takes it back. Never kept: the app starts unpaused.
   let paused = false, pauseToldAt = 0
   const tellPause = (): void => {
-    if (!gameFolder || !addonHearsFonts(gameFolder)) return // an addon from before the fonts has no pause: the app alone stops
+    if (!WRITE_GAME || !gameFolder || !addonHearsFonts(gameFolder)) return // an addon from before the fonts has no pause: the app alone stops
     pauseToldAt = Date.now()
     try {
       send(addonsFolder(gameFolder), { pause: paused ? pauseToldAt : false }, true)
@@ -515,7 +519,7 @@ function createWindow(): void {
   // turns it on in the settings. The same page, the same map files, and what a page may ask for above.
   let lan: Lan | null = null
   let lanWord: SetupStatus['lan'] = null
-  const lookSetup = (): SetupStatus => ({ ...setupStatus(gameFolder, settings, app.getVersion()), lan: lanWord, zoom: settings.zoom ?? 1, gpu: { chosen: settings.noGpu !== true, running: GPU }, lang: langNow() })
+  const lookSetup = (): SetupStatus => ({ ...setupStatus(gameFolder, settings, app.getVersion()), ...(process.platform === 'darwin' ? { mac: true } : {}), lan: lanWord, zoom: settings.zoom ?? 1, gpu: { chosen: settings.noGpu !== true, running: GPU }, lang: langNow() })
   const lanUrl = async (): Promise<void> => {
     const address = await homeAddress()
     if (lan) lanWord = address ? { url: `http://${address}:${LAN_PORT}/?k=${settings.lanCode}` } : { error: t('app.main.noNetwork') }
@@ -617,7 +621,7 @@ function createWindow(): void {
     tellTips()
   }
   const tellHeld = (): void => {
-    if (!gameFolder) return
+    if (!WRITE_GAME || !gameFolder) return
     try {
       const addons = addonsFolder(gameFolder), held = heldOf(sheets)
       if (JSON.stringify(sentParts(addons).sheet) !== JSON.stringify(held)) send(addons, { sheet: held }, addonHearsFonts(gameFolder))
@@ -734,7 +738,7 @@ function createWindow(): void {
   let marksTimer: ReturnType<typeof setTimeout> | null = null
   const sendMarks = (): void => {
     marksTimer = null
-    if (!gameFolder) return
+    if (!WRITE_GAME || !gameFolder) return
     try {
       const addons = addonsFolder(gameFolder)
       const have = sentParts(addons)
@@ -747,7 +751,7 @@ function createWindow(): void {
     }
   }
   const readyChannel = (): void => {
-    if (!gameFolder || setup.addon === null || channel) return
+    if (!WRITE_GAME || !gameFolder || setup.addon === null || channel) return
     const addons = addonsFolder(gameFolder)
     // Once the way is there, the addon is told that this app was just opened and has heard nothing yet:
     // a game already running then sends everything again at once. With it goes the version of this
@@ -774,6 +778,7 @@ function createWindow(): void {
   type Sent = { seq: number } | { error: string }
   const sendParts = (parts: Record<string, unknown> | null): Sent => {
     if (!parts || !gameFolder) return { error: t('app.main.nothingToSend') }
+    if (!WRITE_GAME) return { error: t('app.main.gameReadOnly') }
     try {
       return { seq: send(addonsFolder(gameFolder), parts, addonHearsFonts(gameFolder)).seq }
     } catch {
@@ -893,7 +898,7 @@ function createWindow(): void {
     const snapshot = link.snapshot()
     // What the addon says it has of the sends: the font is written again when it needs something else.
     const inbox = inboxFrom(snapshot.state.sections.inbox), heardNow = JSON.stringify(inbox)
-    if (gameFolder && inbox?.id !== undefined && heardNow !== heardLast) {
+    if (WRITE_GAME && gameFolder && inbox?.id !== undefined && heardNow !== heardLast) {
       heardLast = heardNow
       try {
         hear(addonsFolder(gameFolder), { id: inbox.id, seq: inbox.seq, ...(inbox.got ? { got: inbox.got } : {}) })
@@ -922,7 +927,7 @@ function createWindow(): void {
   const HERE_EVERY = 1500
   let hereSaid: string | null = null
   const tellHere = setInterval(() => {
-    if (!gameFolder || !addonHearsFonts(gameFolder)) return
+    if (!WRITE_GAME || !gameFolder || !addonHearsFonts(gameFolder)) return
     const state = link.snapshot().state, inst = state.sections.pos?.inst
     const grouped = groupFrom(state.sections.group).length > 0
     const here = grouped && inst?.x !== undefined && inst.y !== undefined && { i: inst.id, x: Math.round(inst.x), y: Math.round(inst.y), l: inst.level ?? 0 }
@@ -941,7 +946,7 @@ function createWindow(): void {
   // other, each once the game has the one before, then one too big for a font, then five more, each
   // sent while the game says it is in a fight. All in the record. The part sent is one the addon
   // keeps and does nothing with, and the last send takes it away.
-  if (process.env.TWINMAP_TRIAL) {
+  if (WRITE_GAME && process.env.TWINMAP_TRIAL) {
     const ROW = 40, FIGHTS = 5, began = Date.now()
     let n = 0, awaited = 0, at = 0
     const trial = setInterval(() => {
@@ -1010,6 +1015,7 @@ function createWindow(): void {
     lan?.stop()
     if (marksTimer) clearTimeout(marksTimer)
     link.stop()
+    stopCapture()
     gameLog.stop()
     health.stop()
     tiles.stop()
@@ -1024,10 +1030,11 @@ function createWindow(): void {
 if (app.isPackaged) Menu.setApplicationMenu(null)
 
 // A newer version of the app, if there is one, comes first: see update.ts.
-void app.whenReady().then(() => {
+void Promise.all([captureReady, app.whenReady()]).then(() => {
   record.say(`started: Twinmap ${app.getVersion()}${GPU ? '' : ', hardware acceleration off'}`)
+  if (!captureAllowed()) record.say(t('app.main.screenRecording'))
   updateFirst(createWindow, (line) => record.say(`update: ${line}`))
 })
 
-// Windows only: closing the last window closes the app.
+// Closing the last window closes Twinmap.
 app.on('window-all-closed', () => app.quit())
