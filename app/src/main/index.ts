@@ -230,11 +230,14 @@ function macButtons(win: BrowserWindow): void {
   const check = (): void => {
     if (win.isDestroyed()) return
     const zoom = win.webContents.getZoomFactor(), point = screen.getCursorScreenPoint(), bounds = win.getBounds()
-    const near = win.isVisible() && !win.isFullScreen()
+    // Fullscreen: macOS shows the buttons with the menu bar; hiding them there would also hide the
+    // green exit button, so they stay visible until fullscreen ends and corner hiding resumes.
+    const full = win.isFullScreen()
+    const near = win.isVisible() && !full
       && point.x >= bounds.x && point.x < bounds.x + MAC_CORNER_WIDTH * zoom
       && point.y >= bounds.y && point.y < bounds.y + WINDOW.top * zoom
     if (near) hideAt = Date.now() + MAC_HIDE_AFTER
-    const want = near || Date.now() < hideAt
+    const want = full || near || Date.now() < hideAt
     if (want !== shown) {
       win.setWindowButtonVisibility(want)
       shown = want
