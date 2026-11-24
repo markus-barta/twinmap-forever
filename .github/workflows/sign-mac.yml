@@ -1,0 +1,227 @@
+name: Sign macOS builds
+
+# Signs and notarizes the official macOS builds of catubba/twinmap-forever with this fork's Developer ID,
+# until that project has an Apple Developer account of its own.
+#
+# Every 30 minutes this looks at the latest release there. A release with a macOS build that is not signed
+# here yet is built from its public source at its tag, in a job that holds no secret: whatever runs during
+# the build (npm install scripts included) never sits next to the signing key. A second job, which runs only
+# the commands in this file, signs that build inside out, notarizes and staples it, and publishes it as a
+# release of this fork, tag mac-<their tag>, where their release workflow picks it up and checks it.
+# Tags of this fork never start with v: release.yml builds the Windows app for those.
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag of catubba/twinmap-forever (v1.2.3), or a full commit SHA for a trial run. Empty means the latest release.
+        required: false
+        default: ''
+      publish:
+        description: Publish a release. Off, the signed build stays an artifact of the run (always off for a commit SHA).
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One at a time: a second run waits, then finds the release already signed.
+concurrency:
+  group: sign-mac
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: catubba/twinmap-forever
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.find.outputs.ref }}
+      sha: ${{ steps.find.outputs.sha }}
+      version: ${{ steps.find.outputs.version }}
+      publish: ${{ steps.find.outputs.publish }}
+      todo: ${{ steps.find.outputs.todo }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.ref }}
+          # A scheduled run has no inputs: it publishes.
+          PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+        run: |
+          set -euo pipefail
+          ref="${INPUT_REF:-$(gh release view -R "$UPSTREAM" --json tagName --jq .tagName)}"
+          # The value ends up in git, in a tag name and in release text: only a version tag or a commit SHA.
+          if [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then publish="$PUBLISH"
+          elif [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then publish=false
+          else echo "::error::Not a version tag or a full commit SHA: $ref"; exit 1; fi
+          sha=$(gh api "repos/$UPSTREAM/commits/$ref" --jq .sha)
+          pkg=$(gh api "repos/$UPSTREAM/contents/app/package.json?ref=$sha" --jq .content | base64 --decode)
+          version=$(jq -r .version <<<"$pkg")
+          todo=true
+          if [ -z "$(jq -r '.scripts["dist:mac"] // empty' <<<"$pkg")" ]; then
+            echo "$ref has no macOS build: nothing to sign."; todo=false
+          elif [ "$publish" = true ] && gh release view "mac-$ref" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "mac-$ref is signed already."; todo=false
+          fi
+          echo "$ref = $sha, version $version, publish $publish, to do $todo"
+          { echo "ref=$ref"; echo "sha=$sha"; echo "version=$version"; echo "publish=$publish"; echo "todo=$todo"; } >> "$GITHUB_OUTPUT"
+
+  # Their code runs here, with no secret and a read-only token.
+  build:
+    needs: find
+    if: needs.find.outputs.todo == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: catubba/twinmap-forever
+          ref: ${{ needs.find.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build Twinmap.app as their app-mac job does
+        working-directory: app
+        run: |
+          npm ci
+          npm run dist:mac
+      # ditto keeps the symlinks inside the frameworks, which the artifact upload would flatten.
+      - run: ditto -c -k --keepParent app/dist/mac-arm64/Twinmap.app Twinmap-unsigned.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned
+          path: Twinmap-unsigned.zip
+          retention-days: 3
+
+  # The signing key is here. Nothing from their repository runs: only the commands below, on their build.
+  sign:
+    needs: [find, build]
+    runs-on: macos-15
+    environment: mac-signing
+    permissions:
+      contents: write
+    env:
+      REF: ${{ needs.find.outputs.ref }}
+      SHA: ${{ needs.find.outputs.sha }}
+      VERSION: ${{ needs.find.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned
+      - run: ditto -x -k Twinmap-unsigned.zip . && test -d Twinmap.app
+
+      - name: A keychain of its own with the Developer ID
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db" password=$(uuidgen)
+          echo "::add-mask::$password"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          base64 --decode <<<"$MAC_CERT_P12" > "$RUNNER_TEMP/id.p12"
+          security import "$RUNNER_TEMP/id.p12" -k "$keychain" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign >/dev/null
+          rm -f "$RUNNER_TEMP/id.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          # codesign needs the whole chain to Apple's root; the runner image may lack Apple's intermediate.
+          # Pinned to its fingerprint, so a changed download stops the run.
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $RUNNER_TEMP/DeveloperIDG2CA.cer" | shasum -a 256 -c -
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain" >/dev/null
+          searched=()
+          while IFS= read -r line; do searched+=("$(sed -E 's/^ *"(.*)"$/\1/' <<<"$line")"); done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${searched[@]}"
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+          if [ -z "$identity" ]; then echo "::error::MAC_CERT_P12 holds no Developer ID Application identity"; exit 1; fi
+          { echo "KEYCHAIN=$keychain"; echo "IDENTITY=$identity"; } >> "$GITHUB_ENV"
+
+      # As their scripts/mac-build.cjs does: every Mach-O file deepest first, then the nested bundles deepest
+      # first, then the app, each with the hardened runtime and a secure timestamp, which notarization needs.
+      # Only the apps get the one exception Electron needs, V8's JIT; the entitlements are written here, not
+      # taken from their repository.
+      - name: Sign inside out
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/entitlements.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>
+          PLIST
+          deepest_first() { perl -0ne 'chomp; push @p, $_; END { print "$_\0" for sort { ($b =~ tr{/}{}) <=> ($a =~ tr{/}{}) } @p }'; }
+          sign() { codesign --force --options runtime --timestamp --keychain "$KEYCHAIN" --sign "$IDENTITY" "$@"; }
+          while IFS= read -r -d '' file; do
+            if file -b "$file" | grep -q '^Mach-O'; then sign "$file"; fi
+          done < <(find Twinmap.app/Contents -type f -print0 | deepest_first)
+          while IFS= read -r -d '' bundle; do
+            case "$bundle" in
+              *.app) sign --entitlements "$RUNNER_TEMP/entitlements.plist" "$bundle" ;;
+              *) sign "$bundle" ;;
+            esac
+          done < <(find Twinmap.app/Contents -type d \( -name '*.app' -o -name '*.framework' \) -print0 | deepest_first)
+          sign --entitlements "$RUNNER_TEMP/entitlements.plist" Twinmap.app
+          codesign --verify --deep --strict --verbose=2 Twinmap.app
+
+      - name: Notarize and staple
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$key"
+          notary=(--key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+          ditto -c -k --keepParent Twinmap.app "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" "${notary[@]}" --wait --timeout 30m --output-format json > "$RUNNER_TEMP/notary.json" || true
+          status=$(jq -r '.status // empty' "$RUNNER_TEMP/notary.json") id=$(jq -r '.id // empty' "$RUNNER_TEMP/notary.json")
+          echo "Notarization $id: ${status:-no answer}"
+          if [ "$status" != Accepted ]; then
+            if [ -n "$id" ]; then xcrun notarytool log "$id" "${notary[@]}" || true; fi
+            rm -f "$key"; exit 1
+          fi
+          rm -f "$key"
+          xcrun stapler staple Twinmap.app
+
+      - name: Check it as a player's Mac will
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict Twinmap.app
+          spctl --assess --type execute -vv Twinmap.app
+          xcrun stapler validate Twinmap.app
+          codesign -dvv Twinmap.app 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier|Timestamp)='
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          ditto -c -k --keepParent Twinmap.app "Twinmap-$VERSION-arm64.zip"
+          shasum -a 256 "Twinmap-$VERSION-arm64.zip" > "Twinmap-$VERSION-arm64.zip.sha256"
+          cat "Twinmap-$VERSION-arm64.zip.sha256"
+
+      - name: Publish
+        if: needs.find.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh release create "mac-$REF" -R "$GITHUB_REPOSITORY" \
+            --title "Twinmap $VERSION for macOS, signed" \
+            --notes "Twinmap $VERSION for Apple Silicon, built from the source of $UPSTREAM at $REF ($SHA), signed with a Developer ID, notarized and stapled by [this run]($RUN_URL). The official release is https://github.com/$UPSTREAM/releases/tag/$REF." \
+            "Twinmap-$VERSION-arm64.zip" "Twinmap-$VERSION-arm64.zip.sha256"
+
+      - name: Keep the trial build
+        if: needs.find.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed
+          path: Twinmap-${{ needs.find.outputs.version }}-arm64.zip*
+          retention-days: 7
+
+      - name: Remove the keychain
+        if: always()
+        run: if [ -n "${KEYCHAIN:-}" ]; then security delete-keychain "$KEYCHAIN"; fi
