@@ -137,10 +137,12 @@ jobs:
           mkdir "$work" && ditto -x -k "$zip" "$work"
           [ "$(ls -A "$work")" = Twinmap.app ] && [ -d "$work/Twinmap.app" ] && [ ! -L "$work/Twinmap.app" ]
           app=$(cd "$work/Twinmap.app" && pwd -P)
+          # Lists are written whole before they are read: a find that fails halfway stops the step here.
+          find "$work/Twinmap.app" -type l -print0 > "$RUNNER_TEMP/links"
           while IFS= read -r -d '' link; do
             resolved=$(python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$link")
             case "$resolved" in "$app"/*) ;; *) echo "::error::Symlink out of the app: $link"; exit 1 ;; esac
-          done < <(find "$work/Twinmap.app" -type l -print0)
+          done < "$RUNNER_TEMP/links"
           echo "APP=$work/Twinmap.app" >> "$GITHUB_ENV"
 
       - name: A keychain of its own with the Developer ID
@@ -186,15 +188,19 @@ jobs:
           keychain="$RUNNER_TEMP/signing.keychain-db"
           deepest_first() { perl -0ne 'chomp; push @p, $_; END { print "$_\0" for sort { ($b =~ tr{/}{}) <=> ($a =~ tr{/}{}) } @p }'; }
           sign() { codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$IDENTITY" "$@"; }
+          find "$APP/Contents" -type f -print0 > "$RUNNER_TEMP/files.all"
+          deepest_first < "$RUNNER_TEMP/files.all" > "$RUNNER_TEMP/files"
+          find "$APP/Contents" -type d \( -name '*.app' -o -name '*.framework' \) -print0 > "$RUNNER_TEMP/bundles.all"
+          deepest_first < "$RUNNER_TEMP/bundles.all" > "$RUNNER_TEMP/bundles"
           while IFS= read -r -d '' file; do
             case "$(file -b "$file")" in Mach-O*) sign "$file" ;; esac
-          done < <(find "$APP/Contents" -type f -print0 | deepest_first)
+          done < "$RUNNER_TEMP/files"
           while IFS= read -r -d '' bundle; do
             case "$bundle" in
               *.app) sign --entitlements "$RUNNER_TEMP/entitlements.plist" "$bundle" ;;
               *) sign "$bundle" ;;
             esac
-          done < <(find "$APP/Contents" -type d \( -name '*.app' -o -name '*.framework' \) -print0 | deepest_first)
+          done < "$RUNNER_TEMP/bundles"
           sign --entitlements "$RUNNER_TEMP/entitlements.plist" "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
 
@@ -289,9 +295,12 @@ jobs:
           cd "$RUNNER_TEMP/signed"
           zip="Twinmap-$VERSION-arm64.zip"
           shasum -a 256 -c "$zip.sha256"
-          # A tag left from an earlier attempt must mark this same commit.
-          if existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/mac-$REF" --jq .object.sha 2>/dev/null) && [ "$existing" != "$GITHUB_SHA" ]; then
-            echo "::error::Tag mac-$REF already marks $existing, not $GITHUB_SHA"; exit 1
+          # A tag left from an earlier attempt must mark this same commit (GitHub ignores --target for an existing
+          # tag). Only a 404 means there is none; any other error stops here.
+          if existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/mac-$REF" --jq .object.sha 2>"$RUNNER_TEMP/tag-error"); then
+            if [ "$existing" != "$GITHUB_SHA" ]; then echo "::error::Tag mac-$REF already marks $existing, not $GITHUB_SHA"; exit 1; fi
+          elif ! grep -q 'HTTP 404' "$RUNNER_TEMP/tag-error"; then
+            cat "$RUNNER_TEMP/tag-error"; exit 1
           fi
           gh release create "mac-$REF" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Twinmap $VERSION for macOS, signed" \
