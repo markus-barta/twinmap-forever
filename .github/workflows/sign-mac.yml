@@ -129,8 +129,11 @@ jobs:
         run: |
           set -euo pipefail
           zip="$RUNNER_TEMP/unsigned/Twinmap-unsigned.zip" work="$RUNNER_TEMP/work"
-          if zipinfo -1 "$zip" | grep -v -E '^Twinmap\.app/' | grep -q .; then echo "::error::Entries outside Twinmap.app"; exit 1; fi
-          if zipinfo -1 "$zip" | grep -q -E '(^|/)\.\.(/|$)'; then echo "::error::An entry with .."; exit 1; fi
+          # The listing is read whole first: a grep -q that stops early would make a pipe fail open under pipefail.
+          listing=$(zipinfo -1 "$zip")
+          outside=$(grep -v -E '^Twinmap\.app/' <<<"$listing" || true)
+          if [ -n "$outside" ]; then echo "::error::Entries outside Twinmap.app"; exit 1; fi
+          if grep -q -E '(^|/)\.\.(/|$)' <<<"$listing"; then echo "::error::An entry with .."; exit 1; fi
           mkdir "$work" && ditto -x -k "$zip" "$work"
           [ "$(ls -A "$work")" = Twinmap.app ] && [ -d "$work/Twinmap.app" ] && [ ! -L "$work/Twinmap.app" ]
           app=$(cd "$work/Twinmap.app" && pwd -P)
@@ -164,7 +167,7 @@ jobs:
           searched=()
           while IFS= read -r line; do searched+=("$(sed -E 's/^ *"(.*)"$/\1/' <<<"$line")"); done < "$RUNNER_TEMP/keychains-before.txt"
           security list-keychains -d user -s "$keychain" "${searched[@]}"
-          identity=$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/Developer ID Application/ && !found { print $2; found = 1 }')
           if [ -z "$identity" ]; then echo "::error::MAC_CERT_P12 holds no Developer ID Application identity"; exit 1; fi
           echo "IDENTITY=$identity" >> "$GITHUB_ENV"
 
@@ -184,7 +187,7 @@ jobs:
           deepest_first() { perl -0ne 'chomp; push @p, $_; END { print "$_\0" for sort { ($b =~ tr{/}{}) <=> ($a =~ tr{/}{}) } @p }'; }
           sign() { codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$IDENTITY" "$@"; }
           while IFS= read -r -d '' file; do
-            if file -b "$file" | grep -q '^Mach-O'; then sign "$file"; fi
+            case "$(file -b "$file")" in Mach-O*) sign "$file" ;; esac
           done < <(find "$APP/Contents" -type f -print0 | deepest_first)
           while IFS= read -r -d '' bundle; do
             case "$bundle" in
@@ -229,13 +232,17 @@ jobs:
       - name: Remove the keychain and the key files
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/id.p12" "$RUNNER_TEMP/AuthKey.p8"
+          # Each step runs whatever happened to the one before; the step fails at the end if one did.
+          set +e
+          failed=0
+          rm -f "$RUNNER_TEMP/id.p12" "$RUNNER_TEMP/AuthKey.p8" || failed=1
+          if [ -e "$RUNNER_TEMP/signing.keychain-db" ]; then security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || failed=1; fi
           if [ -f "$RUNNER_TEMP/keychains-before.txt" ]; then
             searched=()
             while IFS= read -r line; do searched+=("$(sed -E 's/^ *"(.*)"$/\1/' <<<"$line")"); done < "$RUNNER_TEMP/keychains-before.txt"
-            security list-keychains -d user -s "${searched[@]}"
+            security list-keychains -d user -s "${searched[@]}" || failed=1
           fi
-          if [ -e "$RUNNER_TEMP/signing.keychain-db" ]; then security delete-keychain "$RUNNER_TEMP/signing.keychain-db"; fi
+          exit "$failed"
 
       - name: Pack
         run: |
@@ -282,7 +289,11 @@ jobs:
           cd "$RUNNER_TEMP/signed"
           zip="Twinmap-$VERSION-arm64.zip"
           shasum -a 256 -c "$zip.sha256"
-          gh release create "mac-$REF" -R "$GITHUB_REPOSITORY" \
+          # A tag left from an earlier attempt must mark this same commit.
+          if existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/mac-$REF" --jq .object.sha 2>/dev/null) && [ "$existing" != "$GITHUB_SHA" ]; then
+            echo "::error::Tag mac-$REF already marks $existing, not $GITHUB_SHA"; exit 1
+          fi
+          gh release create "mac-$REF" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Twinmap $VERSION for macOS, signed" \
             --notes "Twinmap $VERSION for Apple Silicon, built from the source of $UPSTREAM at $REF (commit $SHA), signed with a Developer ID, notarized and stapled by [this run]($RUN_URL). The tag of this release marks the version of the signing workflow, not the source. The official release is https://github.com/$UPSTREAM/releases/tag/$REF." \
             "$zip" "$zip.sha256"
