@@ -1,0 +1,308 @@
+name: Sign macOS builds
+
+# Signs and notarizes the official macOS builds of catubba/twinmap-forever with this fork's Developer ID,
+# until that project has an Apple Developer account of its own.
+#
+# Every 30 minutes this looks at the latest release there. A release with a macOS build that is not signed
+# here yet is built from its public source at its tag, in a job that holds no secret: whatever runs during
+# the build (npm install scripts included) never sits next to the signing key. A second job, which runs only
+# the commands in this file and can only read this repository, signs that build inside out, notarizes and
+# staples it. A third job, with no secret, publishes it as release mac-<their tag> of this fork, where their
+# release workflow picks it up and checks it. Tags of this fork never start with v: release.yml builds the
+# Windows app for those.
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag of catubba/twinmap-forever (v1.2.3), or a full commit SHA for a trial run. Empty means the latest release.
+        required: false
+        default: ''
+      publish:
+        description: Publish a release. Off, the signed build stays an artifact of the run (always off for a commit SHA).
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One at a time: a second run waits, then finds the release already signed.
+concurrency:
+  group: sign-mac
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: catubba/twinmap-forever
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.find.outputs.ref }}
+      sha: ${{ steps.find.outputs.sha }}
+      version: ${{ steps.find.outputs.version }}
+      publish: ${{ steps.find.outputs.publish }}
+      todo: ${{ steps.find.outputs.todo }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.ref }}
+          # A scheduled run has no inputs: it publishes.
+          PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+        run: |
+          set -euo pipefail
+          ref="${INPUT_REF:-$(gh release view -R "$UPSTREAM" --json tagName --jq .tagName)}"
+          # Everything written to the outputs is checked first: the values reach git, tag names and file names.
+          # The version is the tag's, as their release.yml builds the Windows app with it (package.json says 0.0.0).
+          if [[ "$ref" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?)$ ]]; then version="${BASH_REMATCH[1]}" publish="$PUBLISH"
+          elif [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then version="0.0.0-trial.${ref:0:7}" publish=false
+          else echo "::error::Not a version tag or a full commit SHA: $ref"; exit 1; fi
+          sha=$(gh api "repos/$UPSTREAM/commits/$ref" --jq .sha)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::No commit for $ref"; exit 1; }
+          todo=true
+          if ! gh api "repos/$UPSTREAM/contents/app/package.json?ref=$sha" --jq .content | base64 --decode | jq -e '.scripts["dist:mac"]' >/dev/null; then
+            echo "$ref has no macOS build: nothing to sign."; todo=false
+          elif [ "$publish" = true ] && state=$(gh release view "mac-$ref" -R "$GITHUB_REPOSITORY" --json isDraft,assets 2>/dev/null); then
+            # Done means published with both files. Anything else needs a look, not a silent skip.
+            if jq -e --arg zip "Twinmap-$version-arm64.zip" '(.isDraft | not) and ([.assets[].name] | index($zip) and index($zip + ".sha256"))' <<<"$state" >/dev/null; then
+              echo "mac-$ref is signed already."; todo=false
+            else
+              echo "::error::Release mac-$ref exists but is a draft or lacks its files: delete it to sign again."; exit 1
+            fi
+          fi
+          echo "$ref = $sha, version $version, publish $publish, to do $todo"
+          { echo "ref=$ref"; echo "sha=$sha"; echo "version=$version"; echo "publish=$publish"; echo "todo=$todo"; } >> "$GITHUB_OUTPUT"
+
+  # Their code runs here, with no secret and a read-only token.
+  build:
+    needs: find
+    if: needs.find.outputs.todo == 'true'
+    runs-on: macos-15
+    env:
+      SHA: ${{ needs.find.outputs.sha }}
+      VERSION: ${{ needs.find.outputs.version }}
+    steps:
+      - name: Check the values from the first job
+        run: '[[ "$SHA" =~ ^[0-9a-f]{40}$ && "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: catubba/twinmap-forever
+          ref: ${{ needs.find.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Build Twinmap.app as their app-mac job does, with the version of the tag
+        working-directory: app
+        run: |
+          npm ci
+          npm run dist:mac -- -c.extraMetadata.version="$VERSION"
+      # ditto keeps the symlinks inside the frameworks, which the artifact upload would flatten.
+      - run: ditto -c -k --keepParent app/dist/mac-arm64/Twinmap.app Twinmap-unsigned.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned
+          path: Twinmap-unsigned.zip
+          retention-days: 3
+
+  # The signing key is here, and nothing from their repository runs: only the commands below, on their build,
+  # which is treated as untrusted data. This job can only read this repository; the next one publishes.
+  sign:
+    needs: [find, build]
+    runs-on: macos-15
+    environment: mac-signing
+    env:
+      VERSION: ${{ needs.find.outputs.version }}
+    steps:
+      - name: Check the values from the first job
+        run: '[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: unsigned
+          path: ${{ runner.temp }}/unsigned
+
+      # The archive came from a job that ran their code: only Twinmap.app/... entries, unpacked in a folder of
+      # its own, and no symlink that points outside the app.
+      - name: Unpack the build and check it
+        run: |
+          set -euo pipefail
+          zip="$RUNNER_TEMP/unsigned/Twinmap-unsigned.zip" work="$RUNNER_TEMP/work"
+          # The listing is read whole first: a grep -q that stops early would make a pipe fail open under pipefail.
+          listing=$(zipinfo -1 "$zip")
+          outside=$(grep -v -E '^Twinmap\.app/' <<<"$listing" || true)
+          if [ -n "$outside" ]; then echo "::error::Entries outside Twinmap.app"; exit 1; fi
+          if grep -q -E '(^|/)\.\.(/|$)' <<<"$listing"; then echo "::error::An entry with .."; exit 1; fi
+          mkdir "$work" && ditto -x -k "$zip" "$work"
+          [ "$(ls -A "$work")" = Twinmap.app ] && [ -d "$work/Twinmap.app" ] && [ ! -L "$work/Twinmap.app" ]
+          app=$(cd "$work/Twinmap.app" && pwd -P)
+          # Lists are written whole before they are read: a find that fails halfway stops the step here.
+          find "$work/Twinmap.app" -type l -print0 > "$RUNNER_TEMP/links"
+          while IFS= read -r -d '' link; do
+            resolved=$(python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$link")
+            case "$resolved" in "$app"/*) ;; *) echo "::error::Symlink out of the app: $link"; exit 1 ;; esac
+          done < "$RUNNER_TEMP/links"
+          echo "APP=$work/Twinmap.app" >> "$GITHUB_ENV"
+
+      - name: A keychain of its own with the Developer ID
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db" password=$(uuidgen)
+          echo "::add-mask::$password"
+          trap 'rm -f "$RUNNER_TEMP/id.p12"' EXIT
+          security list-keychains -d user > "$RUNNER_TEMP/keychains-before.txt"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          base64 --decode <<<"$MAC_CERT_P12" > "$RUNNER_TEMP/id.p12"
+          security import "$RUNNER_TEMP/id.p12" -k "$keychain" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          # codesign needs the whole chain to Apple's root; the runner image may lack Apple's intermediate.
+          # Pinned to its fingerprint, so a changed download stops the run.
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $RUNNER_TEMP/DeveloperIDG2CA.cer" | shasum -a 256 -c -
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain" >/dev/null
+          searched=()
+          while IFS= read -r line; do searched+=("$(sed -E 's/^ *"(.*)"$/\1/' <<<"$line")"); done < "$RUNNER_TEMP/keychains-before.txt"
+          security list-keychains -d user -s "$keychain" "${searched[@]}"
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/Developer ID Application/ && !found { print $2; found = 1 }')
+          if [ -z "$identity" ]; then echo "::error::MAC_CERT_P12 holds no Developer ID Application identity"; exit 1; fi
+          echo "IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      # As their scripts/mac-build.cjs does: every Mach-O file deepest first, then the nested bundles deepest
+      # first, then the app, each with the hardened runtime and a secure timestamp, which notarization needs.
+      # Only the apps get the one exception Electron needs, V8's JIT; the entitlements are written here, not
+      # taken from their repository.
+      - name: Sign inside out
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/entitlements.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>
+          PLIST
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          deepest_first() { perl -0ne 'chomp; push @p, $_; END { print "$_\0" for sort { ($b =~ tr{/}{}) <=> ($a =~ tr{/}{}) } @p }'; }
+          sign() { codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$IDENTITY" "$@"; }
+          find "$APP/Contents" -type f -print0 > "$RUNNER_TEMP/files.all"
+          deepest_first < "$RUNNER_TEMP/files.all" > "$RUNNER_TEMP/files"
+          find "$APP/Contents" -type d \( -name '*.app' -o -name '*.framework' \) -print0 > "$RUNNER_TEMP/bundles.all"
+          deepest_first < "$RUNNER_TEMP/bundles.all" > "$RUNNER_TEMP/bundles"
+          while IFS= read -r -d '' file; do
+            case "$(file -b "$file")" in Mach-O*) sign "$file" ;; esac
+          done < "$RUNNER_TEMP/files"
+          while IFS= read -r -d '' bundle; do
+            case "$bundle" in
+              *.app) sign --entitlements "$RUNNER_TEMP/entitlements.plist" "$bundle" ;;
+              *) sign "$bundle" ;;
+            esac
+          done < "$RUNNER_TEMP/bundles"
+          sign --entitlements "$RUNNER_TEMP/entitlements.plist" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Notarize and staple
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey.p8"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$ASC_KEY_P8" > "$key"
+          notary=(--key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" "${notary[@]}" --wait --timeout 30m --output-format json > "$RUNNER_TEMP/notary.json" || true
+          status=$(jq -r '.status // empty' "$RUNNER_TEMP/notary.json" 2>/dev/null || true)
+          id=$(jq -r '.id // empty' "$RUNNER_TEMP/notary.json" 2>/dev/null || true)
+          echo "Notarization ${id:-without an id}: ${status:-no answer}"
+          if [ "$status" != Accepted ]; then
+            if [[ "$id" =~ ^[0-9a-f-]{36}$ ]]; then xcrun notarytool log "$id" "${notary[@]}" || true; fi
+            exit 1
+          fi
+          xcrun stapler staple "$APP"
+
+      - name: Check it as a player's Mac will
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict "$APP"
+          spctl --assess --type execute -vv "$APP"
+          xcrun stapler validate "$APP"
+          codesign -dvv "$APP" 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier|Timestamp)='
+
+      # The key leaves before anything is uploaded.
+      - name: Remove the keychain and the key files
+        if: always()
+        run: |
+          # Each step runs whatever happened to the one before; the step fails at the end if one did.
+          set +e
+          failed=0
+          rm -f "$RUNNER_TEMP/id.p12" "$RUNNER_TEMP/AuthKey.p8" || failed=1
+          if [ -e "$RUNNER_TEMP/signing.keychain-db" ]; then security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || failed=1; fi
+          if [ -f "$RUNNER_TEMP/keychains-before.txt" ]; then
+            searched=()
+            while IFS= read -r line; do searched+=("$(sed -E 's/^ *"(.*)"$/\1/' <<<"$line")"); done < "$RUNNER_TEMP/keychains-before.txt"
+            security list-keychains -d user -s "${searched[@]}" || failed=1
+          fi
+          exit "$failed"
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/out" zip="Twinmap-$VERSION-arm64.zip"
+          mkdir "$out"
+          ditto -c -k --keepParent "$APP" "$out/$zip"
+          (cd "$out" && shasum -a 256 "$zip" > "$zip.sha256" && cat "$zip.sha256")
+          for file in "$out/$zip" "$out/$zip.sha256"; do [ -f "$file" ] && [ ! -L "$file" ]; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed
+          path: |
+            ${{ runner.temp }}/out/Twinmap-${{ needs.find.outputs.version }}-arm64.zip
+            ${{ runner.temp }}/out/Twinmap-${{ needs.find.outputs.version }}-arm64.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  # No secret here; only this job may write to the repository.
+  publish:
+    needs: [find, sign]
+    if: needs.find.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REF: ${{ needs.find.outputs.ref }}
+      SHA: ${{ needs.find.outputs.sha }}
+      VERSION: ${{ needs.find.outputs.version }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Check the values from the first job
+        run: '[[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ && "$SHA" =~ ^[0-9a-f]{40}$ && "$REF" == "v$VERSION" ]]'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signed
+          path: ${{ runner.temp }}/signed
+      # The tag mac-<their tag> marks the commit of this fork whose workflow made the build, not its source:
+      # the source is their commit, named in the notes.
+      - name: Publish
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/signed"
+          zip="Twinmap-$VERSION-arm64.zip"
+          shasum -a 256 -c "$zip.sha256"
+          # A tag left from an earlier attempt must mark this same commit (GitHub ignores --target for an existing
+          # tag). Only a 404 means there is none; any other error stops here.
+          if existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/mac-$REF" --jq .object.sha 2>"$RUNNER_TEMP/tag-error"); then
+            if [ "$existing" != "$GITHUB_SHA" ]; then echo "::error::Tag mac-$REF already marks $existing, not $GITHUB_SHA"; exit 1; fi
+          elif ! grep -q 'HTTP 404' "$RUNNER_TEMP/tag-error"; then
+            cat "$RUNNER_TEMP/tag-error"; exit 1
+          fi
+          gh release create "mac-$REF" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Twinmap $VERSION for macOS, signed" \
+            --notes "Twinmap $VERSION for Apple Silicon, built from the source of $UPSTREAM at $REF (commit $SHA), signed with a Developer ID, notarized and stapled by [this run]($RUN_URL). The tag of this release marks the version of the signing workflow, not the source. The official release is https://github.com/$UPSTREAM/releases/tag/$REF." \
+            "$zip" "$zip.sha256"
