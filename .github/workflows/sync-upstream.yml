@@ -30,6 +30,14 @@ jobs:
       contents: write # to push the merge to main
       actions: read # to find an earlier run that was blocked on the same main
     steps:
+      # A run started by hand on another branch would merge into that branch and push it to main.
+      - name: Only on main
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Start this on main, not on $GITHUB_REF."
+            exit 1
+          fi
+
       # The commit this run was started for, so the runs listed for it are about this same main.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
