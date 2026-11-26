@@ -1,13 +1,14 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { deflateSync } from 'node:zlib'
 import { expect, test } from 'vitest'
 import { logFrom, shownFrom } from '../shared/quests'
 import { gameItemFacts, shopRows } from '../shared/items'
 import { gameFolderFrom, openClientFiles, registryInstallPath } from './client-files'
 import { sentKeys } from './keys'
 import type { GameMap } from '../shared/maps'
-import { cbor, doerIndex, fixedPins, ITEM, metWhereQuestieSays, NPC, OBJECT, openQuestie, placed, QUEST, questLog, questPins, search, searchIndex, shops, shownFromLog } from './questie'
+import { cbor, doerIndex, fixedPins, ITEM, metWhereQuestieSays, NPC, OBJECT, openQuestie, placed, QUEST, questLog, questMoney, questPins, search, searchIndex, shops, shownFromLog } from './questie'
 
 // Writes a value the way QuestieDB does: CBOR, then base64. Only what these tests need.
 function enc(v: unknown): Buffer {
@@ -71,6 +72,33 @@ const shown = (icons: { available?: Icon[]; turnin?: Icon[]; objective?: Icon[] 
   return { icons: { available: of(icons.available), turnin: of(icons.turnin), objective: of(icons.objective) }, active: active.map((q) => ({ ...q, done: false })) }
 }
 
+test("a quest pin carries what each quest gives: XP from QuestieDB's own files, money from the game's cache of quests", () => {
+  // The .toc lists the files of XP, Forever's traces after the classic table: a quest in both takes the traces.
+  const folder = game([...LINES, 'support\\Forever\\QuestXP\\xpDB-classic.lua', 'support\\Forever\\QuestXP\\xpDB-traces.lua'])
+  const xp = join(folder, '_forever_', 'Interface', 'AddOns', 'QuestieDB', 'support', 'Forever', 'QuestXP')
+  mkdirSync(xp, { recursive: true })
+  writeFileSync(join(xp, 'xpDB-classic.lua'), 'QuestXP.db = {\n  [7] = {12, 600}, -- Classic: 12: 600\n  [8] = {3, 100},\n}\n')
+  writeFileSync(join(xp, 'xpDB-traces.lua'), 'QuestXP.db[7] = {12, 650}\n')
+  // The game's cache: its header, then each quest, the size of its record and the record, whose 13th number is the money.
+  const record = (id: number, copper: number): Buffer => {
+    const b = Buffer.alloc(8 + 64)
+    b.writeUInt32LE(id, 0)
+    b.writeUInt32LE(64, 4)
+    b.writeUInt32LE(id, 8)
+    b.writeInt32LE(copper, 8 + 48)
+    return b
+  }
+  const head = Buffer.alloc(24)
+  head.write('TSQW', 0, 'latin1')
+  mkdirSync(join(folder, '_forever_', 'Cache', 'WDB', 'enUS'), { recursive: true })
+  writeFileSync(join(folder, '_forever_', 'Cache', 'WDB', 'enUS', 'questcache.wdb'), Buffer.concat([head, record(7, 320), record(8, 0)]))
+  const db = openQuestie(folder)!
+  const pins = questPins(db, shown({ available: [[7, 12, 42.5, 65.25], [8, 40, 10, 20], [10, 40, 61.5, 30]] }), questMoney(folder))
+  expect(pins.map((p) => p.rewards)).toEqual([{ '[12] A Parcel for the Miller': { level: 12, xp: 650, copper: 320 } }, { '[3] Rats in the Cellar': { level: 3, xp: 100 } }, undefined])
+  // Without the game's cache, the XP alone.
+  expect(questPins(db, shown({ available: [[7, 12, 42.5, 65.25]] }))[0]!.rewards).toEqual({ '[12] A Parcel for the Miller': { level: 12, xp: 650 } })
+})
+
 test('an icon of a quest on offer is a pin on the same spot, named after who stands there', () => {
   const db = openQuestie(game(LINES))!
   // Questie shows the miller in one of the two zones he stands in: so does the app, and no more.
@@ -125,9 +153,29 @@ test('who offers a service is pinned where they stand, and so are ore and herbs'
     { area: 12, x: 42.5, y: 65.25, name: 'Miller Odo', layers: ['vendors'], side: 'A', npc: 101 },
     { area: 40, x: 10, y: 20, name: 'Miller Odo', layers: ['vendors'], side: 'A', npc: 101 },
     { area: 40, x: 55, y: 45, name: 'Smith Hale', sub: 'Armorer', layers: ['vendors', 'repair'], side: 'AH', npc: 105, sells: [60] },
-    { area: 12, x: 30, y: 30, name: 'Copper Vein', layers: ['ore'] },
-    { area: 12, x: 31, y: 32, name: 'Copper Vein', layers: ['ore'] },
-    { area: 40, x: 70, y: 70, name: 'Peacebloom', layers: ['herbs'] },
+    { area: 12, x: 30, y: 30, name: 'Copper Vein', layers: ['ore'], kind: 'copper', need: 1 },
+    { area: 12, x: 31, y: 32, name: 'Copper Vein', layers: ['ore'], kind: 'copper', need: 1 },
+    { area: 40, x: 70, y: 70, name: 'Peacebloom', layers: ['herbs'], kind: 'Peacebloom', need: 1 },
+  ])
+})
+
+test('with the game in another language, ore and herbs are still told by their English names and shown by the translated ones', () => {
+  const zipped = (v: unknown): string => deflateSync(enc(v)).toString('base64')
+  const db = openQuestie(
+    game([
+      ...LINES,
+      `## X-Object-901-S: ${b64({ [OBJECT.name]: 'Copper Vein' })}`,
+      `## X-Object-901-${OBJECT.spawns}: ${b64({ 12: [[30, 30]] })}`,
+      `## X-Object-902-S: ${b64({ [OBJECT.name]: 'Peacebloom' })}`,
+      `## X-Object-902-${OBJECT.spawns}: ${b64({ 40: [[70, 70]] })}`,
+      `## X-Object-IDS: ${zipped([901, 902])}`,
+      `## X-l10n-frFR-Object: ${zipped([['Filon de cuivre', 'Pacifique']])}`,
+    ]),
+    'frFR',
+  )!
+  expect(fixedPins(db).filter((p) => p.layers[0] === 'ore' || p.layers[0] === 'herbs')).toEqual([
+    { area: 12, x: 30, y: 30, name: 'Filon de cuivre', layers: ['ore'], kind: 'copper', need: 1 },
+    { area: 40, x: 70, y: 70, name: 'Pacifique', layers: ['herbs'], kind: 'Peacebloom', need: 1 },
   ])
 })
 
@@ -195,6 +243,9 @@ test('values come back as QuestieDB wrote them', () => {
   expect(cbor(enc(value))).toEqual(value)
   expect(cbor(Buffer.from('gYEZAzc=', 'base64'))).toEqual([[823]])
   expect(cbor(Buffer.from([0xf9, 0x3e, 0x00]))).toBe(1.5) // a half-size float
+  // A Lua string comes as bytes, and they are UTF-8: Хоггер.
+  const bytes = Buffer.from('Хоггер')
+  expect(cbor(Buffer.concat([Buffer.from([0x40 + bytes.length]), bytes]))).toBe('Хоггер')
   expect(() => cbor(Buffer.from([0x82, 0x01]))).toThrow()
 })
 
@@ -350,7 +401,29 @@ test.skipIf(!real)('the innkeeper of Ironforge sells his 17 goods at the prices 
   // Toxic Skullcap, from Tawny Grisette: the game has no row of it, the server sent one.
   expect(gameItemFacts(files, [])![281246]).toBeUndefined()
   expect(shopRows(sold.get(4554)!, facts).find((r) => r.id === 281246)).toEqual({ id: 281246, name: 'Toxic Skullcap', quality: expect.any(Number), buy: 150, perBuy: 1 })
-}, 60_000)
+  // A game in Russian with the cache of English only: the game's own names in Russian, and the server's English row for
+  // the item only it knows, rather than nothing. (Skipped where the PC holds no Russian.)
+  const russian = gameItemFacts(openClientFiles(real!, sentKeys(real!), 'ruRU'), [], sent)!
+  if (russian[2589]![0] !== 'Linen Cloth') {
+    expect(russian[2589]![0]).toBe('Льняной материал')
+    expect(russian[281246]![0]).toBe('Toxic Skullcap')
+  }
+}, 120_000)
+
+// The names QuestieDB keeps in other languages, for a game in one of them. (Needs the player's QuestieDB.)
+test.skipIf(!real)('quests, NPCs, objects and items are named in the language of the game, English where QuestieDB has none', () => {
+  const english = openQuestie(real!, 'enUS')!, russian = openQuestie(real!, 'ruRU')!, korean = openQuestie(real!, 'koKR')!
+  expect(english.get('Npc', 448, NPC.name)).toBe('Hogger')
+  expect(russian.get('Npc', 448, NPC.name)).toMatch(/^[А-Яа-я ]+$/)
+  expect(korean.get('Npc', 448, NPC.name)).toMatch(/[가-힣]/)
+  // Every quest named in English has a name in Russian, its own or failing that the English one; most have their own.
+  const quests = english.ids.Quest.filter((id) => typeof english.get('Quest', id, QUEST.name) === 'string')
+  const named = quests.map((id) => russian.get('Quest', id, QUEST.name))
+  expect(named.every((n) => typeof n === 'string' && n.length > 0)).toBe(true)
+  expect(named.filter((n) => /[А-Яа-я]/.test(n as string)).length / named.length).toBeGreaterThan(0.8)
+  // What is not a name stays as it is.
+  expect(russian.get('Npc', 448, NPC.spawns)).toEqual(english.get('Npc', 448, NPC.spawns))
+}, 120_000)
 
 test("what the addon's log need not send: a creature, an object or a quest QuestieDB has with a place", () => {
   const db = openQuestie(game([...LINES, `## X-Quest-11-S: ${b64({ [QUEST.name]: 'Cull the Rats' })}`, `## X-Quest-11-${QUEST.objectives}: ${b64([[[102]]])}`]))!

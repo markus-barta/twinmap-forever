@@ -82,10 +82,13 @@ if (!inApp) {
     },
     setOnTop: () => Promise.resolve(),
     setZoom: () => Promise.resolve(),
+    setWorkspaces: () => Promise.resolve(), // a phone has the defaults (M20-F13 gives it its own)
     setGpu: () => Promise.resolve(),
     restart: () => Promise.resolve(),
     lang: call('lang', 'enUS'),
     setLang: () => Promise.resolve(), // the language is chosen on the computer
+    langAsked: () => Promise.resolve(),
+    newsSeen: () => Promise.resolve(),
     zoomBy: () => Promise.resolve(),
     setLan: () => Promise.resolve(),
     setParticipate: () => Promise.resolve(),

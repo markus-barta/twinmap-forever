@@ -2,10 +2,11 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
+import { t } from '../shared/i18n'
 import type { LinkStatus } from '../shared/link'
 import { setupComplete, setupPages, timeLeft, type SetupStatus, pageOf } from '../shared/setup'
 import type { TilesStatus } from '../shared/tiles-status'
-import { addonVersion, readSettings, setupStatus, writeSettings } from './setup'
+import { addonVersion, askLangOf, newsSinceOf, readSettings, setupStatus, writeSettings } from './setup'
 
 const folder = (): string => mkdtempSync(join(tmpdir(), 'twinmap-setup-'))
 const addons = (game: string, ...names: string[]): void => {
@@ -77,6 +78,25 @@ test('what went wrong is said on its page: a map not built, an addon to tick, on
   expect(old).toMatchObject({ state: 'problem', lines: ['Update the addon from CurseForge.'] })
 })
 
+test('missing Screen Recording permission is first on the macOS play page until the link is live', () => {
+  const setup: SetupStatus = { mac: true, screenRecording: false, gameFolder: '/WoW', addon: '0.1.0', questie: false, shortestPath: false, done: false, version: '0.1.0', onTop: false, participate: false }
+  const update: LinkStatus = { kind: 'update-app', word: 'Update the app', tone: 'objective', line: 'Download Twinmap.' }
+  for (const link of [null, CLOSED, { ...CLOSED, kind: 'minimized' } as LinkStatus, { ...CLOSED, kind: 'lost' } as LinkStatus, update]) {
+    expect(setupPages(setup, READY, link)[4]).toMatchObject({ state: 'problem', lines: [t('app.link.screenRecording'), t('app.firstRun.play.tick')] })
+  }
+  for (const link of [CONNECTED, { ...CONNECTED, kind: 'combat' } as LinkStatus]) {
+    expect(setupPages(setup, READY, link)[4]).toMatchObject({ state: 'done', lines: [t('app.firstRun.play.connected')] })
+  }
+})
+
+test('without a missing permission the macOS play page behaves as on Windows', () => {
+  const setup: SetupStatus = { gameFolder: '/WoW', addon: '0.1.0', questie: false, shortestPath: false, done: false, version: '0.1.0', onTop: false, participate: false }
+  for (const link of [null, CLOSED, CONNECTED, { ...CLOSED, kind: 'lost' } as LinkStatus]) {
+    expect(setupPages({ ...setup, mac: true }, READY, link)[4]).toEqual(setupPages(setup, READY, link)[4])
+  }
+  expect(setupPages({ ...setup, mac: true }, READY, CLOSED)[4]).toMatchObject({ state: 'todo', lines: [t('app.firstRun.play.waiting'), t('app.firstRun.play.tick')] })
+})
+
 test('the time left is said once there is something to tell it from, in round numbers', () => {
   expect(timeLeft(0, 0, 2000, 20), 'too early').toBe('')
   expect(timeLeft(0, 10, 5000, 10), 'nothing moved').toBe('')
@@ -95,4 +115,37 @@ test('an optional addon that is missing gets a button to its own page, and no ot
   expect(pageOf('questie')).toBe('https://www.curseforge.com/wow/addons/questiedb')
   expect(pageOf('shortestPath')).toBe('https://www.curseforge.com/wow/addons/shortest-path-forever')
   for (const other of [undefined, 'toString', 'https://example.com', 7]) expect(pageOf(other)).toBe('https://www.curseforge.com/wow/addons/twinmap-forever')
+})
+
+test('the language is asked once after the update, only to a player whose game speaks one the app speaks now', () => {
+  const french = (code: string): boolean => code === 'frFR'
+  expect(askLangOf({ setupDone: true }, 'frFR', french), 'had Twinmap before, game in French').toBe(true)
+  expect(askLangOf({}, 'frFR', french), 'a new player: the first run asks').toBe(false)
+  expect(askLangOf({ setupDone: true, langAsked: true }, 'frFR', french), 'asked already').toBe(false)
+  expect(askLangOf({ setupDone: true, lang: 'enUS' }, 'frFR', french), 'chose one already').toBe(false)
+  expect(askLangOf({ setupDone: true }, 'enUS', french), 'game in English').toBe(false)
+  expect(askLangOf({ setupDone: true }, 'deDE', french), 'game in a language not out yet').toBe(false)
+  expect(askLangOf({ setupDone: true }, null, french), 'game folder not found').toBe(false)
+})
+
+test("What's new shows after an update, from the version last seen, never after a first run", () => {
+  expect(newsSinceOf({ setupDone: true, seenVersion: '0.15.1' }, '0.16.1'), 'updated past two versions').toBe('0.15.1')
+  expect(newsSinceOf({ setupDone: true, seenVersion: '0.16.1' }, '0.16.1'), 'seen already').toBeNull()
+  expect(newsSinceOf({ setupDone: true, seenVersion: '0.16.9' }, '0.16.10'), 'numbers, not letters').toBe('0.16.9')
+  expect(newsSinceOf({ setupDone: true }, '0.17.0'), 'had Twinmap before the window: this version only').toBe('')
+  expect(newsSinceOf({}, '0.17.0'), 'a new player, in the first run').toBeNull()
+  // The version seen is kept between runs, and only a version is.
+  const file = join(mkdtempSync(join(tmpdir(), 'twinmap-')), 'settings.json')
+  writeSettings(file, { setupDone: true, seenVersion: '0.17.0' })
+  expect(readSettings(file)).toEqual({ setupDone: true, seenVersion: '0.17.0' })
+  writeSettings(file, { seenVersion: 'latest' } as never)
+  expect(readSettings(file)).toEqual({})
+})
+
+test('the language asked is kept between runs', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'twinmap-')), 'settings.json')
+  writeSettings(file, { setupDone: true, langAsked: true, lang: 'frFR' })
+  expect(readSettings(file)).toEqual({ setupDone: true, langAsked: true, lang: 'frFR' })
+  writeSettings(file, { lang: 'pseudo-ko' }) // a pseudo-language of a script, for trials
+  expect(readSettings(file)).toEqual({ lang: 'pseudo-ko' })
 })

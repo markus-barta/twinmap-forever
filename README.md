@@ -10,8 +10,12 @@ An interactive map of World of Warcraft: Forever for your second screen.</p>
 
 <p align="center">
   <a href="https://www.curseforge.com/wow/addons/twinmap-forever"><img src="https://img.shields.io/badge/1._The_addon-Get_it_on_CurseForge-F16436?style=for-the-badge&amp;logo=curseforge&amp;logoColor=white" alt="1. The addon: get it on CurseForge" height="44"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/catubba/twinmap-forever/releases/latest/download/Twinmap-Setup.exe"><img src="https://img.shields.io/badge/2._The_app-Download_for_Windows-1f6feb?style=for-the-badge&amp;logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0wIDMuNCA5LjggMnY5LjRIMHptMTEgLTEuNkwyNCAwdjExLjRIMTF6TTAgMTIuNmg5LjhWMjJMMCAyMC42em0xMSAwaDEzVjI0bC0xMy0xLjh6Ii8+PC9zdmc+" alt="2. The app: download for Windows" height="44"></a>
   &nbsp;&nbsp;
-  <a href="https://github.com/catubba/twinmap-forever/releases/latest/download/Twinmap-Setup.exe"><img src="https://img.shields.io/badge/2._The_app-Download_for_Windows-1f6feb?style=for-the-badge&amp;logoColor=white" alt="2. The app: download for Windows" height="44"></a>
+  <a href="https://github.com/catubba/twinmap-forever/releases/latest/download/Twinmap-mac-arm64.zip"><img src="https://img.shields.io/badge/2._The_app-Download_for_Mac-1f6feb?style=for-the-badge&amp;logo=apple&amp;logoColor=white" alt="2. The app: download for Mac" height="44"></a>
 </p>
 
 <p align="center">You need both. Free, with no account, no ads and no Overwolf.</p>
@@ -29,7 +33,7 @@ An interactive map of World of Warcraft: Forever for your second screen.</p>
 ## Install in three steps
 
 1. **The addon.** Install [Twinmap Forever from CurseForge](https://www.curseforge.com/wow/addons/twinmap-forever) and restart the game.
-2. **The app.** [Download Twinmap for Windows](https://github.com/catubba/twinmap-forever/releases/latest/download/Twinmap-Setup.exe) and open the file. It asks for no administrator rights and starts by itself.
+2. **The app.** [Download Twinmap for Windows](https://github.com/catubba/twinmap-forever/releases/latest/download/Twinmap-Setup.exe) and open the file. It asks for no administrator rights and starts by itself. On a Mac, [download Twinmap for Mac](https://github.com/catubba/twinmap-forever/releases/latest/download/Twinmap-mac-arm64.zip): see below.
 3. **Play.** The app finds your game and builds the map from your own game files, once, in a minute or two. Log in: your arrow appears on its own.
 
 From then on the app updates itself, and the addon is updated from CurseForge.
@@ -58,9 +62,14 @@ Every version of the app, with its notes, is on the [releases page](https://gith
 
 ## macOS
 
-On an Apple Silicon Mac with Node.js 24 and Xcode, run `cd app && npm ci && npm run dist:mac`. Open the ad-hoc signed `app/dist/mac-arm64/Twinmap.app`. Allow Twinmap under **System Settings > Privacy & Security > Screen Recording**, then reopen Twinmap.
+Twinmap runs on Apple Silicon Macs (macOS 14 or later), with the macOS client of WoW: Forever.
 
-Twinmap checks `/Applications/World of Warcraft` and `~/Applications/World of Warcraft` for Forever. It reads the game and addon files. Pins and routes stay in Twinmap on macOS. To verify capture with a synthetic window, run `npm run probe:mac` from `app/` with Screen Recording access for the Electron app used by the probe.
+1. [Download Twinmap for Mac](https://github.com/catubba/twinmap-forever/releases/latest/download/Twinmap-mac-arm64.zip), open the zip and move **Twinmap** to **Applications**.
+2. Open Twinmap. The first time, allow it under **System Settings > Privacy & Security > Screen Recording**, then open it again.
+
+Twinmap looks for the game in `/Applications/World of Warcraft` and `~/Applications/World of Warcraft`. Everything works as on Windows, pins and routes sent to the game included. Not on Mac yet: automatic updates (download each new version here) and HDR.
+
+The Mac app is signed and notarized by markus-barta, who builds it from the source of each release; every release checks that it holds the same code before attaching it.
 
 ## What it does
 
@@ -84,15 +93,18 @@ Search NPCs, items, quests, zones, dungeons and your own pins, with the distance
 
 ### Every character, with the game closed
 
-Bags, bank, gear and statistics of every character you play, with a picture of each. A filter leaves lit what you are looking for, and tells you which other character holds it.
+Bags, bank, gear and statistics of every character you play, with a picture of each, and their professions, spellbook and talents. A filter leaves lit what you are looking for, and tells you which other character holds it.
 
-![The Items page: what a character wears, its bags and its bank, another character chosen by name, and a filter](https://twinmap.app/media/items.gif)
+![The Character workspace: what a character wears, its bags and its bank, another character chosen by name, and a filter](https://twinmap.app/media/items.gif)
 
 ### And more
 
+- **Your own layout.** The tabs at the top are workspaces of panels. With Edit layout, put the map, Now, your bags or the auction house side by side, stack them or group them as tabs, and make workspaces of your own.
+- **Shopping list.** Add a recipe or an item, and Twinmap says what is missing, where to get it and what it all costs.
+- **In your language.** English, Français, Deutsch, Español (España), Español (Latinoamérica), Русский, 한국어 and 简体中文, the app and the addon, with the names of your game in its own language.
 - **Auction House.** The prices of your character's auction house, every hour: what your bags, bank and gear are worth, how a price moved over a day or a week, and an alert when it crosses your line.
-- **Your quests.** Where to hand in what is done and where to find what is left, for every quest of your log. With Questie installed, the ones to take as well.
-- **Services and resources.** Flight masters, inns, vendors, repair, trainers, banks, ore and herbs, each one a layer you turn on or off.
+- **Your quests.** Where to hand in what is done and where to find what is left, for every quest of your log, with the XP and money each one gives. With Questie installed, the ones to take as well.
+- **Services and resources.** Flight masters, inns, vendors, repair, trainers, banks, ships and zeppelins, ore and herbs, each one a layer you turn on or off. Ore and herbs go by kind too, and can hide what no longer raises your skill.
 - **Caves and mines.** Zoom in on a zone and their galleries show through the ground, before you go in.
 - **When you die.** The map marks your corpse, the graveyard and the way back on foot, or the door of the dungeon you died in.
 - **From the map to the game.** Mark a point or build a route on Twinmap, and it appears in the game.
@@ -148,12 +160,11 @@ Twinmap is young and it is being worked on all the time. New versions come out o
 Here is what is planned, in no particular order. These are plans, not promises: what you ask for can change them.
 
 - **Group**: quests you share, pins everyone sees
-- **Travel**: time to arrive, flight paths, boats and zeppelins, your hearthstone
+- **Travel**: flight paths, your hearthstone
 - **More on the map**: zones colored by level, the places you have explored, rares and treasures
-- **Quests**: your whole quest log, chains, rewards, and a plan for the session
-- **Character**: experience per hour, professions, reputations, a reminder when your trainer has something new
+- **Quests**: your whole quest log, chains, item rewards, and a plan for the session
+- **Character**: experience per hour, reputations, a reminder when your trainer has something new
 - **Alerts**: full bags, broken gear, a disconnected game, and why you died
-- **Items**: a shopping list
 - **Tools**: a macro builder, your action bars, a talent calculator, a screenshot gallery
 - **Guides**: leveling guides that turn into routes on the map
 - **Global shortcuts** and a **signed installer**

@@ -83,7 +83,7 @@ export default {
     },
   },
 
-  // The word inside an empty equipment slot of the Slots view, shown in capitals in a 44px square: very short.
+  // The word inside an empty equipment slot of the panel Character, shown in capitals in a 44px square: very short.
   slots: {
     head: 'Head',
     neck: 'Neck',
@@ -106,10 +106,12 @@ export default {
     ranged: 'Ranged',
   },
 
-  // Who a character is, under its name in the character list and on the Slots view.
+  // Who a character is, under its name in the character list and on the panel Character.
   character: {
     // {level}: a number; {race}: one of races; {class}: one of classes. "Level 24 Gnome Warlock".
     line: 'Level {level} {race} {class}',
+    // The same line when the level is not known yet.
+    kind: '{race} {class}',
   },
   // The races, by the game's tokens: in character.line.
   races: {
@@ -154,11 +156,7 @@ export default {
     filter: 'Filter by name or type',
     // Read aloud only.
     filterLabel: 'Filter items',
-    viewLabel: 'View',
     whereLabel: 'Where',
-    // The two halves of a switch: short.
-    slots: 'Slots',
-    table: 'Table',
     // The first chip over the table, followed by how many.
     all: 'All',
     // The sum at the end of the tools row, its parts after one another with " · ". {money}: gold, silver and copper with their coins.
@@ -167,7 +165,7 @@ export default {
     money: 'Money {money}',
   },
 
-  // The Slots view: what the character wears around its picture, taken off the game's character window.
+  // The panel Character: what the character wears around its picture, taken off the game's character window.
   doll: {
     // Read aloud only.
     label: 'Worn',
@@ -187,17 +185,14 @@ export default {
     noneNote: 'Open the character window in game and it is taken by itself.',
   },
 
-  // The Slots view: the bags and the bank as grids, each heading followed by a smaller line.
+  // The panels Bags and Bank: their grids, each heading followed by a smaller line.
   held: {
-    // Read aloud only.
-    label: 'Bags and bank',
     bags: 'Bags',
     bagsNow: 'as they are now',
     // {ago}: one of ago.
     bagsAsOf: 'as of {ago}',
     bank: 'Bank',
     bankSeen: 'seen {ago}',
-    bankUnseen: 'not seen yet: open it in game once',
     // Headings of the grids, in capitals.
     backpack: 'Backpack and bags',
     reagents: 'Reagent bag',
@@ -209,7 +204,77 @@ export default {
     empty: { other: 'empty · {count} slots' },
   },
 
-  // The Table view: a row for each item.
+  // The panel Bank before the bank was ever seen: a title, what to do in the game, then where (smaller).
+  bank: {
+    none: 'No bank seen yet',
+    open: 'Open your bank once in the game: what is in it shows here, also when the game is closed.',
+    where: 'Talk to a banker in any capital.',
+  },
+
+  // The panel Professions: the character's professions with their level, and the recipes of the one chosen.
+  professions: {
+    // Headings of the two lists of the Professions panel: the main professions, then Cooking, First Aid, Fishing. As the game names them.
+    primary: 'Professions',
+    secondary: 'Secondary Skills',
+    // Placeholder of the field that narrows the recipes by name. Short.
+    filter: 'Filter recipes',
+    // Heading over the recipes the character knows, followed by how many.
+    known: 'Known',
+    // Heading over the recipes the profession's window lists that the character has not learned, followed by how many.
+    unknown: 'Not learned',
+    unknownNote: 'The number: the skill at which each turns yellow.',
+    // The key of the colours of the known recipes, as the game colours them: four short items on one line.
+    optimal: 'Orange: sure skill-up',
+    medium: 'Yellow: likely',
+    easy: 'Green: seldom',
+    trivial: 'Grey: none',
+    // In place of the recipes when none matches what is typed in the filter.
+    noMatch: 'No recipe matches.',
+    // A character with no profession: the title, what to do in the game, a note.
+    none: 'No professions yet',
+    learn: 'Learn one at a profession trainer, in any city: its level and its recipes show here.',
+    also: 'Cooking, First Aid and Fishing count too.',
+    // A profession whose window the addon never saw open: the title, then what to do. {profession}: its name, as the game writes it.
+    unseen: 'No recipes seen yet',
+    open: 'Open {profession} once in the game: its recipes show here, also when the game is closed.',
+    // A profession with no recipes in the game (Herbalism, Skinning). {profession}: its name.
+    // A profession whose window was seen before the addon read its headings and the recipes it lists: what to do. {profession}: its name.
+    again: 'Open {profession} once more in the game: its headings and the recipes not learned show here too.',
+    gathers: '{profession} has no recipes: its level is all there is to show.',
+  },
+
+  // The panel Spellbook: the tabs of the game's spellbook and the spells of the one chosen. The tabs' and spells' names come from the game.
+  spellbook: {
+    // Placeholder of the field that narrows the spells of the tab by name. Short.
+    filter: 'Filter spells',
+    // Under a passive spell the game writes nothing under: as the game's book words it.
+    passive: 'Passive',
+    // In place of the spells when none matches what is typed in the filter.
+    noMatch: 'No spell matches.',
+    // A sheet without the book: the title, then what to do in the game.
+    none: 'No spellbook yet',
+    login: "Log in to the game with Twinmap's addon up to date: the spells of your book show here, also when the game is closed.",
+  },
+
+  // The panel Talents: the character's talent trees as the game's window draws them, and the points spent in each.
+  talents: {
+    // Beside the title of the panel. {count}: the points spent in all three trees.
+    spent: { one: '{count} point spent', other: '{count} points spent' },
+    // Beside it, in green, when the character has points not spent yet. As the game words it (UNSPENT_TALENT_POINTS).
+    free: 'Unspent Talent Points: {count}',
+    // In the tooltip of a talent, under its name, as the game words it (TOOLTIP_TALENT_RANK).
+    rank: 'Rank {rank}/{most}',
+    // In the popup of a talent, over the lines of the rank after the one it has, as the game words it (TOOLTIP_TALENT_NEXT_RANK).
+    next: 'Next Rank:',
+    // In red at the bottom of the popup of a talent whose row is not open yet, as Forever words it. {count}: the points still to
+    // spend in its tree; {tree}: the tree's name, as the game writes it.
+    need: { one: 'Spend {count} more point in {tree} Talents', other: 'Spend {count} more points in {tree} Talents' },
+    // A character with no talent taken and no point to spend: the title, then what to do in the game.
+    none: 'No talents yet',
+    learn: "Talents come at level 10, then one point each level. Spend them in the game's talent window: they show here.",
+  },
+
+  // The panel Inventory: a row for each item.
   table: {
     // Column headings, in capitals: short.
     columns: {
@@ -323,6 +388,51 @@ export default {
     spellsAsOf: '{name}, level {level} · spells as of {ago}',
     bankSeen: 'Bank seen {ago} · {name}',
     bankUnseen: 'Bank not seen yet: open it in game once · {name}',
+  },
+
+  // The shopping list in the side panel, above Now (ShoppingList.svelte, M10-F4), and the + that puts things on it.
+  shopping: {
+    // On the band at its top.
+    title: 'Shopping list',
+    // Alone in a panel, or in Edit layout, while the list is empty.
+    empty: 'Nothing on it yet. Add a recipe with the + at a profession trainer, or an item with the + of the search.',
+    // Under the band, at the left, the money at the right. {name}: the character's first name.
+    forWho: 'For {name}',
+    // Headings of the groups, in capitals (written normally here: the page raises them). {count}: how many lines.
+    making: 'Making · {count}',
+    makeFirst: 'Make first · {count}',
+    missing: 'Missing · {count}',
+    ready: 'Ready · {count}',
+    // At the right of the missing heading, small. {price}: gold, silver and copper with their coins.
+    toBuy: 'to buy {price}',
+    // Small, under a recipe on the list. {profession}: the profession as the game names it; {skill}, {have}: numbers. needs is red.
+    youKnow: '{profession} · you know it',
+    needs: '{profession} {skill} needed, you have {have}',
+    notKnown: '{profession} · not learned',
+    unread: '{profession} · open its window once in game',
+    // Small, under a part to make or an item a recipe makes: what one go takes. {items}: amounts, one after another with ", ".
+    takes: '{items} each',
+    // The same for a recipe that makes more than one at a go. {count}: how many it makes.
+    takesFor: '{items} for {count}',
+    // One amount of takes. {count}: a number; {item}: an item's name as the game writes it.
+    amount: '{count} {item}',
+    // Before takes, then " · ", for a recipe not learned yet: the skill it asks at the trainer.
+    toLearn: '{profession} {skill} to learn',
+    // At the right of a part to make, small. {count}: how many to make, bold.
+    make: 'make {count}',
+    // At the right of a missing line, small. {missing}: how many are missing, bold and red; {count}: how many in all.
+    of: '{missing} of {count}',
+    // On the band when the list is folded, small; then " · " and toBuy when there is something to buy.
+    folded: { other: '{count} missing' },
+    foldedNone: 'Everything at hand',
+    // Read aloud and as the pointer rests on the band.
+    fold: 'Fold the shopping list',
+    unfold: 'Unfold the shopping list',
+    // The two small buttons around a goal's count: read aloud and as the pointer rests.
+    fewer: 'One fewer',
+    more: 'One more',
+    // The + on a recipe of a trainer's panel and on an item the search finds: read aloud and as the pointer rests. {item}: its name.
+    add: 'Add {item} to the shopping list',
   },
 
   // The character picker at the start of the top row (Picker.svelte).

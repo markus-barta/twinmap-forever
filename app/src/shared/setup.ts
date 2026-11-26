@@ -1,4 +1,5 @@
 // The first run: its pages, one thing each, and what each says.
+import type { Workspaces } from './workspaces'
 import type { LinkStatus } from './link'
 import { tilesHelp, type TilesStatus } from './tiles-status'
 import { num, t } from './i18n'
@@ -7,6 +8,8 @@ import { num, t } from './i18n'
 export interface SetupStatus {
   /** The desktop app is on macOS. */
   mac?: true
+  /** Present only on macOS while Screen Recording permission is missing. */
+  screenRecording?: false
   /** The folder of World of Warcraft: Forever, or null while none is found. */
   gameFolder: string | null
   /** The version of the Twinmap Forever addon found in it, or null. */
@@ -31,6 +34,16 @@ export interface SetupStatus {
   lan?: { url: string } | { error: string } | null
   /** The language the app speaks (shared/i18n): a page that speaks another loads again in this one. */
   lang?: string
+  /** Every language planned, in its own words, and whether it can be had yet (shared/i18n, planned). */
+  langs?: { code: string; name: string; soon: string; ready: boolean }[]
+  /** The language the game is in (textLocale), or null when it is not known. */
+  gameLang?: string | null
+  /** The window that asks for the language once after the update is due (askLangOf, main/setup.ts). */
+  askLang?: boolean
+  /** What's new as the app starts (newsSinceOf, main/setup.ts): the version whose news the player last saw, '' when not known, null for none. */
+  newsSince?: string | null
+  /** The workspaces kept (M20), in the app's own window only: missing until laid out once, and on a phone. */
+  workspaces?: Workspaces
 }
 
 /** Where the addon is published. The app never installs it itself: every install is one CurseForge counts. */
@@ -48,8 +61,10 @@ export const pageOf = (asked: unknown): string => (typeof asked === 'string' && 
 
 export type PageState = 'done' | 'todo' | 'working' | 'problem'
 export interface Page {
-  id: 'game' | 'map' | 'addon' | 'extras' | 'play'
+  id: 'language' | 'game' | 'map' | 'addon' | 'extras' | 'play'
+  /** Its name in the row of steps, and its title unless it has a heading. */
   title: string
+  heading?: string
   /** Why this page is there, in a sentence or two. */
   intro: string
   state: PageState
@@ -57,7 +72,7 @@ export interface Page {
   lines: string[]
   /** Percent done, while the app is working on it. */
   progress?: number
-  action?: 'choose-folder' | 'curseforge' | 'retry'
+  action?: 'choose-folder' | 'curseforge' | 'retry' | 'language'
   /** The optional addons that are not installed: each gets a button to its page on CurseForge. */
   get?: Optional[]
   /** Said on the page whatever its state: it must be read before the thing it warns of is on. */
@@ -125,22 +140,27 @@ export function setupPages(setup: SetupStatus, tiles: TilesStatus | null, link: 
     warning: t('app.firstRun.photosensitivity'),
     ...(live
       ? { state: 'done', lines: [t('app.firstRun.play.connected')] }
-      : link?.kind === 'update-app' || link?.kind === 'update-addon'
-        ? { state: 'problem', lines: [link.line ?? link.word] }
-        : {
-            state: 'todo',
-            lines: [
-              link?.kind === 'lost' || link?.kind === 'waiting'
-                ? t('app.firstRun.play.silent')
-                : link?.kind === 'minimized'
-                  ? t('app.firstRun.play.minimized')
-                  : t('app.firstRun.play.waiting'),
-              t('app.firstRun.play.tick'),
-            ],
-          }),
+      : setup.screenRecording === false
+        ? { state: 'problem', lines: [t('app.link.screenRecording'), t('app.firstRun.play.tick')] }
+        : link?.kind === 'update-app' || link?.kind === 'update-addon'
+          ? { state: 'problem', lines: [link.line ?? link.word] }
+          : {
+              state: 'todo',
+              lines: [
+                link?.kind === 'lost' || link?.kind === 'waiting'
+                  ? t('app.firstRun.play.silent')
+                  : link?.kind === 'minimized'
+                    ? t('app.firstRun.play.minimized')
+                    : t('app.firstRun.play.waiting'),
+                t('app.firstRun.play.tick'),
+              ],
+            }),
   }
   return [game, map, addon, extras, play]
 }
+
+/** The first page of the first run, before the five: the language, already on the game's when the app speaks it. */
+export const languagePage = (): Page => ({ id: 'language', title: t('language.step'), heading: t('language.title'), intro: t('language.intro'), state: 'done', lines: [], action: 'language' })
 
 /** Game found, map built, addon installed, position coming: nothing is left to do. */
 export const setupComplete = (pages: Page[]): boolean => pages.every((p) => p.state === 'done')
@@ -154,4 +174,11 @@ export function timeLeft(startedAt: number, startedPercent: number, now: number,
   if (elapsed < 3 || gained <= 0 || percent >= 100) return ''
   const seconds = Math.max(1, Math.round(((100 - percent) / gained) * elapsed))
   return seconds < 60 ? t('app.firstRun.secondsLeft', { count: Math.ceil(seconds / 5) * 5 }) : t('app.firstRun.minutesLeft', { count: Math.round(seconds / 60) })
+}
+
+/** Whether version a comes after version b (0.16.10 after 0.16.9). */
+export function after(a: string, b: string): boolean {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number)
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
+  return false
 }

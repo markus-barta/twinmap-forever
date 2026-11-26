@@ -3,7 +3,7 @@ import { boxOf, buildingsAt, inPiece, killedIn, nameOfBoss, piecesIn, RARE_BOSSE
 import { DUNGEON_PINS } from './dungeon-pins'
 import { MORE_BOSS_PINS } from './more-boss-pins'
 
-const piece = (over: Partial<Piece>): Piece => ({ file: 1, u: 100, v: 100, width: 32, height: 16, angle: 0, bottom: 0, top: 5, building: 0, level: 0, ...over })
+const piece = (over: Partial<Piece>): Piece => ({ file: 1, u: 100, v: 100, width: 32, height: 16, angle: 0, bottom: 0, top: 5, building: 0, room: 0, level: 0, ...over })
 
 test('a unit of the map is a 256th of the square of 64 blocks', () => {
   expect(YARDS_PER_UNIT * 256).toBeCloseTo((64 * 1600) / 3, 6)
@@ -90,6 +90,11 @@ test('the bosses the pins lacked are marked killed by the name the game gives th
   const fights = (map: number, fight: string): Set<string> => killedIn({ map, list: [fight] }, map)
   expect(fights(289, 'Kirtonos').has(nameOfBoss('Kirtonos the Herald'))).toBe(true)
   expect(fights(289, 'Ras Frostwhisperer').has(nameOfBoss('Ras Frostwhisper'))).toBe(true)
+  // Those placed by the players' kills, by the number of their fight, in every language.
+  for (const [map, id] of [[109, 3587], [109, 3588], [129, 2781], [230, 230], [230, 2791], [2959, 3301], [2959, 3310], [2959, 3311]]) {
+    const pin = MORE_BOSS_PINS.find(([m, name]) => m === map && killedIn({ map, list: [], ids: [id] }, map).has(nameOfBoss(name)))
+    expect(pin, `fight ${id}`).toBeDefined()
+  }
   // And none of them is a pin twice.
   const pinned = new Set(DUNGEON_PINS.flatMap((d) => d.bosses.map(([name]) => `${d.map} ${nameOfBoss(name)}`)))
   expect(MORE_BOSS_PINS.filter(([map, name]) => pinned.has(`${map} ${nameOfBoss(name)}`))).toEqual([])
@@ -106,7 +111,7 @@ test('a kill in a game in another language marks its boss by the number of the f
 })
 
 test('a building counts as under the ground when half of its floor has the terrain over its ceiling', () => {
-  const room = (building: number, u: number, top: number, width = 10): Piece => ({ file: 1, u, v: 0, width, height: 10, angle: 0, bottom: top - 5, top, building, level: 0 })
+  const room = (building: number, u: number, top: number, width = 10): Piece => ({ file: 1, u, v: 0, width, height: 10, angle: 0, bottom: top - 5, top, building, room: 0, level: 0 })
   // The terrain: 100 yards high everywhere, 60 east of u = 500, none at all east of u = 900.
   const groundAt = (u: number): number | null => (u >= 900 ? null : u >= 500 ? 60 : 100)
   const pieces = [

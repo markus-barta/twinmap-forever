@@ -2,6 +2,73 @@
 
 What changed in each version of Twinmap, newest first. The section of a version is also the text of its release on GitHub and of the addon's file on CurseForge.
 
+## 0.18.0 - 2026-11-26
+
+### New
+
+- **Workspaces, and Edit layout.** The tabs at the top are now workspaces, each a layout of panels that Twinmap keeps: Map, Character and Auction House to start, opened with Ctrl and 1 to 6. Click Edit layout, the icon after the tabs (or press Ctrl+E), to drag panels beside each other, stack them or group them as tabs, add panels from a list and close the ones you do not need. Make up to six workspaces of your own with +, rename one with a double click and drag it to move it. Reset this workspace and Restore default workspaces bring them back as they were.
+
+![Edit layout, the icon after the tabs](https://raw.githubusercontent.com/catubba/twinmap-forever/main/docs/images/news/0.18.0-edit-layout.png)
+
+- **Professions, Spellbook and Talents.** The Character workspace has them as panels beside Inventory: the level and recipes of each of your professions, the game's spellbook tab by tab, and the talent trees of your class with the talents you took. Every spell and talent shows the game's own tooltip.
+- **Now, a block at a time.** Next stop, Attention, My pins, Quests, Nearby and Experience can each go into a panel of their own. The Auction House is in panels too: its search, the item, My items and the alerts.
+- **Shopping list.** Add a recipe with the + on a profession trainer's window, or an item with the + of the search. The list says what is missing and where to get it (another of your characters, the nearest vendor and its price, the recipe that makes it, who drops it) and what buying it all costs, and it follows your bags and bank as you play. Thanks to Stalioot.
+- **Ships and zeppelins.** Every dock has its ship or zeppelin on the map: click one to see its way and where it goes, across the sea too. Turn them on or off with Ships and zeppelins in Map filters. Thanks to Stalioot.
+- **Your arrow, your colour.** Settings, Appearance, Arrow: any colour and a size from 75% to 200%, on the 2D map and in the 3D view. Thanks to Stalioot.
+- **The Mac app as a download.** Each release now has the Mac app beside the Windows installer, on GitHub and on twinmap.app. Thanks to markus-barta.
+- **Eight more bosses on the dungeon maps.** Eight bosses that had no pin on their dungeon map now have one, where the players who share data killed them.
+
+### Changed
+
+- **Items is now Character.** Bags, Bank and Inventory are panels of the Character workspace.
+- **Quest objectives by kind.** Objectives near each other that ask the same thing are one pin, drawn by what they ask, with the number of quests at its corner. Point at a quest in Quests, in Now, to keep its pins lit and dim the others. Thanks to Stalioot.
+- **A hidden map rests.** The map stops drawing while no workspace shows it.
+- **Fewer wrong places in dungeons.** A place found anew is let go when rooms the game always draws from there are not on the minimap.
+
+### Fixed
+
+- **Your arrow inside dungeons.** Since 0.17.0, standing still for a few seconds in a dungeon could make Twinmap read the wrong part of the screen and lose your character. It reads the minimap again.
+- **The Filters menu on a short map.** It stays inside the map however low its panel.
+
+## 0.17.0 - 2026-11-24
+
+### New
+
+- **Twinmap on Mac.** Twinmap now runs on Apple Silicon Macs (macOS 14 or later) with the macOS client of WoW: Forever. A download for Mac follows soon; until then the README on GitHub says how to build it. Thanks to markus-barta.
+- **What's new.** After an update, Twinmap shows once what changed in the versions you skipped. Settings, About Twinmap, What's new shows it again.
+- **Arrival times at your speed.** The time on the label of a point and on the band of the next stop now goes at your character's own speed, and on a mount it says so: "0:50 mounted". Thanks to Stalioot.
+- **Metres.** With Twinmap in English or Chinese, Settings, General, Distances writes distances in metres. The numbers stay the game's own, as in the game's clients in other languages: only the unit changes.
+- **The line on the side of the game.** In the addon's options, Position now has Left edge and Right edge too, for setups where the top of the game window is covered or off screen, such as a game stretched over two screens.
+
+### Changed
+
+- **Settings in a window.** Settings opens over the map, with its categories in a column on the left. Every choice is one row, and the side of the map is now in Appearance.
+- **Layers is now Filters.** The button at the top of the map and its menu have a clearer name. The L key still opens it.
+
+### Fixed
+
+- **Followed in dungeons with the minimap in the corner.** With a minimap of some widths right against the top right corner of the screen, Twinmap did not follow your character inside dungeons. It does now.
+- **No more "addon older than this app" by mistake.** A line read while the game was redrawing it could make Twinmap say the addon was too old, with the same version on both sides. Twinmap now believes only a line that checks out.
+
+## 0.16.1 - 2026-11-24
+
+### New
+
+- **Ore and herbs by kind.** In Layers, the arrow beside Ore and beside Herbs opens the list of their kinds, each with the skill it asks, coloured as the game colours it for your Mining or Herbalism. Turn off the kinds you do not want on the map, or tick Hide grey to hide what no longer raises your skill: the list follows you as you learn.
+- **Each herb its own icon.** Herbs on the map show their own picture on a dark disc, so Peacebloom and Silverleaf are told apart at a glance.
+- **Quest rewards.** The tooltip of a quest icon shows the XP each quest gives your character, and the money it pays for the quests your game has already seen.
+
+### Fixed
+
+- **Ore and herbs in other languages.** With the game in a language other than English, most veins and many herbs were missing from the map since 0.16.0. They are all back, with their names in your game's language.
+
+## 0.16.0 - 2026-11-23
+
+### New
+
+- **Twinmap in eight languages.** English, Français, Deutsch, Español (España), Español (Latinoamérica), Русский, 한국어 and 简体中文: every text of the app and of the addon, written with the words your game uses in each. The first run asks which one, Twinmap asks once after this update if your game is in one of them, and Settings, Language, changes it at any time. If something reads wrong in your language, tell us with Feedback.
+- **Names in the language of your game.** Zones, places, quests, NPCs, items, bosses and professions come in the language your game is set to, also when Twinmap speaks another, and the search finds them as the game writes them.
+
 ## 0.15.1 - 2026-11-23
 
 ### New
