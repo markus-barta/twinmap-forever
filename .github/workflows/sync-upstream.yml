@@ -5,8 +5,8 @@ name: Sync with upstream
 # Every hour this merges their main into this main, but only when their changes since the last merge leave
 # .github/ alone. A workflow merged into main runs on main, and main is the only branch that reaches the signing
 # environment of sign-mac.yml: a change there waits for someone to review it and merge it by hand. Such a run
-# fails once, listing the paths; later scheduled runs on the same main only warn, so one blocked merge sends one
-# notice. Tags are never fetched: release.yml builds the Windows app for v tags.
+# fails in its step "Blocked", listing the paths; later scheduled runs on the same main only warn, so one blocked
+# merge sends one notice. Their tags are never fetched: release.yml builds the Windows app for v tags.
 on:
   schedule:
     - cron: '13 * * * *'
@@ -28,51 +28,95 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # to push the merge to main
-      actions: read # to find an earlier failed run on the same main
+      actions: read # to find an earlier run that was blocked on the same main
     steps:
+      # The commit this run was started for, so the runs listed for it are about this same main.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Merge their main when it leaves .github/ alone
+      - id: look
+        name: Compare with their main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --quiet "$UPSTREAM" main
+          theirs=$(git rev-parse FETCH_HEAD) ours=$(git rev-parse HEAD)
+          echo "theirs=$theirs" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$theirs" "$ours"; then
+            echo "main already holds ${theirs:0:7} of their main."
+            echo "state=level" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Two bases (criss-cross history) make the merge's view of .github/ differ from this check's: by hand.
+          if [ "$(git merge-base --all "$ours" "$theirs" | wc -l)" -ne 1 ]; then
+            echo "::error::main and their main ${theirs:0:7} have more than one merge base. Merge by hand."
+            exit 1
+          fi
+          base=$(git merge-base "$ours" "$theirs")
+          # Without rename detection, so a file moved out of .github/ counts as well.
+          paths=$(git diff --no-renames --name-only "$base" "$theirs" -- .github)
+          if [ -z "$paths" ]; then
+            echo "state=merge" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "### Not merged: their main changes .github/"
+            echo "Their main ${theirs:0:7} changes, since ${base:0:7}:"
+            echo '```'
+            echo "$paths"
+            echo '```'
+            echo "Review with \`git diff --no-renames $base $theirs -- .github\`, then merge by hand."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::Their main ${theirs:0:7} changes .github/: $(echo "$paths" | tr '\n' ' ')"
+          echo "state=blocked" >> "$GITHUB_OUTPUT"
+
+      # Fails once per blocked main. Only a failure of this step counts as the notice, not a failure for another reason.
+      - name: Blocked
+        if: steps.look.outputs.state == 'blocked'
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          git fetch --no-tags --quiet "$UPSTREAM" main
-          theirs=$(git rev-parse FETCH_HEAD) ours=$(git rev-parse HEAD)
-          if git merge-base --is-ancestor "$theirs" "$ours"; then
-            echo "main already holds ${theirs:0:7} of their main."
+          reported=false
+          if [ "$EVENT" = schedule ]; then
+            if ids=$(gh run list -R "$GITHUB_REPOSITORY" --workflow sync-upstream.yml --commit "$GITHUB_SHA" --status failure --limit 50 --json databaseId --jq '.[].databaseId'); then
+              for id in $ids; do
+                if gh run view "$id" -R "$GITHUB_REPOSITORY" --json jobs --jq '.jobs[].steps[] | select(.name == "Blocked" and .conclusion == "failure") | .name' | grep -q .; then
+                  reported=true
+                  break
+                fi
+              done
+            else
+              echo "::warning::Could not list earlier runs: reporting again."
+            fi
+          fi
+          if [ "$reported" = true ]; then
+            echo "::warning::Still waiting for a review of their .github/ changes (reported in an earlier run)."
             exit 0
           fi
-          base=$(git merge-base "$ours" "$theirs")
-          # Without rename detection, so a file moved out of .github/ counts as well.
-          paths=$(git diff --no-renames --name-only "$base" "$theirs" -- .github)
-          if [ -n "$paths" ]; then
-            {
-              echo "### Not merged: their main changes .github/"
-              echo "Their main ${theirs:0:7} changes, since ${base:0:7}:"
-              echo '```'
-              echo "$paths"
-              echo '```'
-              echo "Review with \`git diff --no-renames $base $theirs -- .github\`, then merge by hand."
-            } >> "$GITHUB_STEP_SUMMARY"
-            failed=$(gh run list -R "$GITHUB_REPOSITORY" --workflow sync-upstream.yml --commit "$ours" --status failure --limit 1 --json databaseId --jq length)
-            if [ "$EVENT" = schedule ] && [ "$failed" != 0 ]; then
-              echo "::warning::Still waiting for a review of their .github/ changes (reported in an earlier run)."
-              exit 0
-            fi
-            echo "::error::Their main ${theirs:0:7} changes .github/: $(echo "$paths" | tr '\n' ' ')- review it and merge by hand."
-            exit 1
-          fi
+          echo "::error::Their main changes .github/: review it and merge by hand (see the summary of this run)."
+          exit 1
+
+      - name: Merge their main
+        if: steps.look.outputs.state == 'merge'
+        env:
+          THEIRS: ${{ steps.look.outputs.theirs }}
+        run: |
+          set -euo pipefail
+          before=$(git rev-parse HEAD:.github)
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          if ! git merge --no-ff --no-edit -m "Merge catubba/twinmap-forever main (${theirs:0:7})" "$theirs"; then
+          if ! git merge --no-ff --no-edit -m "Merge catubba/twinmap-forever main (${THEIRS:0:7})" "$THEIRS"; then
             git merge --abort
-            echo "::error::Their main ${theirs:0:7} does not merge cleanly into main. Merge by hand."
+            echo "::error::Their main ${THEIRS:0:7} does not merge cleanly into main. Merge by hand."
+            exit 1
+          fi
+          # What reaches main under .github/ is exactly what was there: checked on the result, not only on their diff.
+          if [ "$(git rev-parse HEAD:.github)" != "$before" ]; then
+            echo "::error::Merging their main ${THEIRS:0:7} would change .github/. Nothing pushed; merge by hand."
             exit 1
           fi
           git push origin HEAD:main
-          echo "Merged their main ${theirs:0:7} into main."
+          echo "Merged their main ${THEIRS:0:7} into main."
