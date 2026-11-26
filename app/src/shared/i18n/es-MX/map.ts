@@ -1,0 +1,184 @@
+// El español de Latinoamérica del mapa: the notes on every key are in en/map.ts.
+export default {
+  layers: {
+    button: 'Filtros',
+    buttonTip: 'Filtros (L)',
+    menu: 'Filtros del mapa',
+    // Group after a colon: "todos los {group}" would need the gender of each group name (las Misiones, el Mundo).
+    hideAll: 'Ocultar todo: {group}',
+    showAll: 'Mostrar todo: {group}',
+    kinds: 'Tipos: {layer}',
+    hideGrey: 'Ocultar grises',
+    hideGreyTip: 'Ocultar lo que ya no aumenta tu habilidad',
+    skill: 'Habilidad {skill}',
+    notLearned: 'No aprendido',
+    skillUnread: 'Habilidad aún no leída',
+    groups: {
+      you: 'Tú',
+      quests: 'Misiones',
+      services: 'Servicios',
+      resources: 'Recursos',
+      world: 'Mundo',
+      group: 'Grupo',
+    },
+    // Service layers follow the game's minimap tracking menu (glossary), so the NPC, not the place.
+    names: {
+      arrow: 'Flecha',
+      route: 'Ruta',
+      mypins: 'Mis marcadores',
+      death: 'Cadáver y cementerio',
+      available: 'Disponibles',
+      turnin: 'Para entregar',
+      objectives: 'Objetivos',
+      flight: 'Maestro de vuelo',
+      inn: 'Tabernero',
+      vendors: 'Mercaderes',
+      repair: 'Reparación',
+      trainers: 'Instructores',
+      bank: 'Banquero',
+      auction: 'Subastador',
+      stable: 'Maestro de establos',
+      ore: 'Minerales',
+      herbs: 'Hierbas',
+      zones: 'Nombres de lugares',
+      relief: 'Relieve',
+      caves: 'Cuevas',
+      dungeons: 'Calabozos',
+      routes: 'Rutas de vuelo',
+      vessels: 'Barcos y zepelines',
+      bosses: 'Jefes de calabozo',
+      companions: 'Grupo',
+    },
+  },
+
+  continents: {
+    easternKingdoms: 'Reinos del Este',
+    kalimdor: 'Kalimdor',
+  },
+
+  corner: {
+    // Place after a colon: "Volver a {place}" breaks on names with an article (al Baluarte).
+    back: 'Volver: {place}',
+    view3d: 'Vista 3D',
+    view3dTip: 'Vista 2D o 3D (3)',
+    turn: 'Girar con tu personaje',
+    turnTip: 'Girar con tu personaje (N)',
+    northUpTip: 'Norte arriba (N)',
+    // Floors of a dungeon: "Pisos", since "Nivel" is the character's level in the game.
+    levels: 'Pisos',
+    levelsShown: 'Pisos visibles',
+    everyRoom: 'Todas las salas',
+    roomsUpTo: 'Salas hasta el piso {level}',
+    zoomIn: 'Acercar',
+    zoomInTip: 'Acercar (+)',
+    zoomOut: 'Alejar',
+    zoomOutTip: 'Alejar (-)',
+    follow: 'Seguir',
+    followTip: 'Seguir a tu personaje (F)',
+  },
+
+  offMap: 'Este lugar no está en el mapa.',
+  fps: '{fps} FPS',
+  nothingToSend: 'No hay nada que enviar.',
+
+  pins: {
+    rewardXp: '{xp} PE',
+    entrance: 'Entrada',
+    shipTo: 'Barco: {place}',
+    zeppelinTo: 'Zepelín: {place}',
+    entranceOf: 'Entrada: {name}',
+    rareBoss: '{name} (raro)',
+    graveyard: 'Cementerio',
+    corpse: 'Tu cadáver',
+    // "seguido": a pin (marcador) is masculine.
+    followed: '{name}, seguido en el juego',
+    journey: '{name}, destino del trayecto en el juego',
+    quest: {
+      available: 'Misión disponible',
+      turnin: 'Misión para entregar',
+      objective: 'Objetivo de misión',
+    },
+    objective: {
+      slay: 'Objetivo: matar',
+      loot: 'Objetivo: recoger',
+      object: 'Objetivo: usar',
+      talk: 'Objetivo: hablar',
+      event: 'Objetivo: ir allá',
+    },
+  },
+
+  // x and y come from toFixed (a dot, as 42.3), so the comma between them stays unambiguous.
+  place: {
+    coords: '{x}, {y}',
+    inZone: '{zone} {x}, {y}',
+  },
+
+  way: {
+    north: '{far} al norte',
+    northEast: '{far} al noreste',
+    east: '{far} al este',
+    southEast: '{far} al sureste',
+    south: '{far} al sur',
+    southWest: '{far} al suroeste',
+    west: '{far} al oeste',
+    northWest: '{far} al noroeste',
+    onFoot: '{time} a pie',
+    mounted: '{time} en montura',
+  },
+
+  label: {
+    pinName: 'Nombre del marcador',
+    far: '{far}, {time}',
+    dungeonMap: 'Mapa de calabozo',
+    raidMap: 'Mapa de banda',
+    send: 'Enviar al juego',
+    sending: 'Enviando',
+    sent: 'Enviado',
+    stopFollowing: 'Dejar de seguir',
+    // A stop of the route is a "parada": shorter than "Añadir a la ruta" on a small button.
+    addToRoute: 'Añadir parada',
+    inRoute: 'Ya en la ruta',
+    save: 'Guardar',
+    remove: 'Quitar',
+    noAnswer: 'El juego aún no responde. Recibirá el marcador cuando salgas de combate.',
+  },
+
+  nextStop: {
+    none: 'Sin ruta. Haz clic en el mapa para añadir una parada.',
+    title: 'Próxima parada',
+    count: '{n} de {of}',
+    complete: 'Ruta completada',
+    // Other continent, or inside or outside a dungeon: "the same map" says it more plainly than "ground".
+    elsewhere: 'No está en el mismo mapa que tú',
+    here: 'Aquí',
+    minutes: 'min a pie',
+    minutesMounted: 'min en montura',
+    skip: 'Omitir',
+    // Three buttons side by side: the band is about the route already, so the verb alone.
+    edit: 'Editar',
+    clear: 'Borrar',
+    unsent: 'Sin enviar',
+    // Same reason: "Enviar la ruta al juego" is too long beside the note on the same line.
+    send: 'Enviar al juego',
+    onItsWay: 'Enviando al juego.',
+    moveUp: 'Subir: {name}',
+    moveDown: 'Bajar: {name}',
+    remove: 'Quitar: {name}',
+  },
+
+  search: {
+    // Without the verb, beside the magnifier, as in French: with "Buscar" the last word would not fit the box.
+    placeholder: 'PNJ, objetos, misiones, zonas',
+    field: 'Buscar',
+    results: 'Resultados',
+    none: 'No hay nada con ese nombre.',
+    zone: 'Zona',
+    myPin: 'Mi marcador',
+    myPinIn: 'Mi marcador, {zone}',
+    dungeon: 'Calabozo',
+    dungeonIn: 'Calabozo, {zone}',
+    raid: 'Banda',
+    raidIn: 'Banda, {zone}',
+    foundIn: '{what}, {zone}',
+  },
+}

@@ -1,13 +1,13 @@
 -- Twinmap Forever, the in-game half. It reads and draws; it never acts for the player.
 local _, ns = ...
 
-ns.VERSION = "0.15.1" -- same as the .toc; a test keeps the two in step
+ns.VERSION = "0.18.0" -- same as the .toc; a test keeps the two in step
 ns.PROTOCOL = 2 -- the app refuses a strip whose protocol it does not know; 2 since the app tells everything through the fonts, so that an app from before says to update itself
 
 -- The player's choices, saved by the game in TwinmapForeverDB.
 local DEFAULTS = {
   paused = false,    -- true: nothing is drawn
-  position = "TOP",  -- edge of the window the strip sits on: "TOP" or "BOTTOM"
+  position = "TOP",  -- edge of the window the strip sits on: "TOP", "BOTTOM", "LEFT" or "RIGHT"
   mode = "steady",   -- "steady": every block normal, then in negative. "fast": normal only
   -- Temporary, for the camouflage trials (sliders in Options.lua). These defaults are the values
   -- that hide the strip best on a real screen; the player can still move every one of them.
@@ -40,16 +40,16 @@ SLASH_TWINMAP1 = "/twinmap"
 SlashCmdList["TWINMAP"] = function(msg)
   local word = (msg or ""):lower():match("^%s*(.-)%s*$")
   if word == "skip" then
-    if not ns.SkipStop() then print("Twinmap Forever: no route to skip on.") end
+    if not ns.SkipStop() then ns.Say("command.noRoute") end
   elseif word == "pause" then
     ns.db.paused = not ns.db.paused
-    print(ns.db.paused and "Twinmap Forever: strip paused." or "Twinmap Forever: strip on.")
-    if ns.linkPaused then print("Twinmap Forever: Twinmap has paused the strip too. Resume it there.") end
+    ns.Say(ns.db.paused and "command.paused" or "command.on")
+    if ns.linkPaused then ns.Say("command.appPausedToo") end
   else
-    print(("Twinmap Forever %s, protocol %d"):format(ns.VERSION, ns.PROTOCOL))
-    if ns.linkPaused then print("Twinmap has paused the strip. Resume it there, or /reload.") end
+    print(ns.T("status.version", { version = ns.VERSION, protocol = ns.PROTOCOL }))
+    if ns.linkPaused then print(ns.L["status.appPaused"]) end
     if ns.signal ~= "waiting" and ns.signal ~= "reading" then
-      print(("Nothing can arrive from Twinmap in this session (%s). Open Twinmap once, then restart the game."):format(ns.signal))
+      print(ns.T("status.noInbox", { why = ns.signal }))
     end
   end
 end

@@ -801,6 +801,34 @@ Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
 
 ================================================================================
+dockview-core
+https://github.com/mathuo/dockview
+Used in: the app, for the workspaces and their panels (app/src/renderer/src/frame.svelte.ts)
+================================================================================
+
+MIT License
+
+Copyright (c) 2021 mathuo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
 three.js
 https://threejs.org
 Used in: the app, to draw the ground in 3D (app/src/renderer/src/terrain3d.ts)
@@ -1104,6 +1132,30 @@ Used in: the app, for text and numbers (from the npm package
 ================================================================================
 
 Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1,
+whose full text is printed above, under Marcellus.
+
+================================================================================
+Sofia Sans Semi Condensed
+by The Sofia Sans Project Authors (Lettersoup), https://github.com/lettersoup/Sofia-Sans
+Used in: the app, for Cyrillic letters in text (from the npm package
+@fontsource/sofia-sans-semi-condensed)
+================================================================================
+
+Copyright 2019 The Sofia Sans Project Authors (https://github.com/lettersoup/Sofia-Sans)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1,
+whose full text is printed above, under Marcellus.
+
+================================================================================
+Forum
+by Denis Masharov, https://github.com/google/fonts/tree/main/ofl/forum
+Used in: the app, for Cyrillic letters in titles (from the npm package
+@fontsource/forum)
+================================================================================
+
+Copyright (c) 2011, Denis Masharov <denis.masharov@gmail.com>
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1,
 whose full text is printed above, under Marcellus.

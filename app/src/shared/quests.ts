@@ -1,5 +1,6 @@
 // The quests on the map: the icons the addon tells of Questie, and the pins the app makes of them
 // with the names of the player's own QuestieDB.
+import { gathered } from './geo'
 import type { FixedPin } from './services'
 
 /** An icon Questie holds on the game's map: its quest, and its place in percent of the map of a zone. */
@@ -42,6 +43,48 @@ export interface QuestPin {
   name: string
   /** The quests it is there for. */
   quests: string[]
+  /** What each of them gives, by its line in quests: missing where nothing is known. */
+  rewards?: Record<string, QuestReward>
+}
+
+/** Objectives laid as one pin: where, which, what they ask for, the quests they are for, and whether they are lit. */
+export interface ObjectiveGroup<T> {
+  x: number
+  y: number
+  of: T[]
+  kind?: ObjectiveKind
+  quests: string[]
+  lit: boolean
+}
+/**
+ * The objectives as the map lays them: those within reach of each other that ask for the same thing are one pin in
+ * their middle, as the quests seen from far are (gathered). front: a quest picked in the Now column, or null; its
+ * objectives are gathered on their own and lit, every other one is dim.
+ */
+export function objectiveGroups<T extends { x: number; y: number; p: QuestPin }>(placed: T[], reach: number, front: string | null): ObjectiveGroup<T>[] {
+  const sets = new Map<string, T[]>()
+  for (const q of placed) {
+    const key = `${q.p.kind ?? ''} ${front === null || q.p.quests.includes(front)}`
+    sets.set(key, [...(sets.get(key) ?? []), q])
+  }
+  return [...sets].flatMap(([key, of]) =>
+    gathered(of, reach).map((g) => ({ ...g, kind: of[0]!.p.kind, quests: [...new Set(g.of.flatMap((q) => q.p.quests))], lit: key.endsWith('true') })),
+  )
+}
+
+/** What a quest gives: its XP at the level QuestieDB has it for, and the money the game's cache tells (copper). */
+export interface QuestReward {
+  level?: number
+  xp?: number
+  copper?: number
+}
+
+// ponytail: Questie's own reckoning (from CMaNGOS), its rounding included, so that the two show the same; Forever's own
+// multipliers of a quest (the game's cache has them) are not read.
+/** A quest's XP for a character: less for a quest under it, rounded as the game rounds it. */
+export function questXp(base: number, questLevel: number, level: number): number {
+  const v = (base * Math.min(10, Math.max(1, 2 * (questLevel - level) + 20))) / 10
+  return v <= 100 ? 5 * Math.floor((v + 2) / 5) : v <= 500 ? 10 * Math.floor((v + 5) / 10) : v <= 1000 ? 25 * Math.floor((v + 12) / 25) : 50 * Math.floor((v + 25) / 50)
 }
 
 /** A quest of the log, by the name its pins carry. */

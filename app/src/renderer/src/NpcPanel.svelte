@@ -4,6 +4,7 @@
   // many are in bags and bank; a trainer's spells or recipes, what can be learned now with its total, then each
   // level or skill still to reach, the known folded at the foot. Read only. The logic is in shared/npc-panel.ts.
   import { ago, classNameAll, firstName, type Known } from '../../shared/characters'
+  import { gameName } from '../../shared/game-names'
   import { around, t } from '../../shared/i18n'
   import { coins, QUALITY_COLORS, type ItemFacts } from '../../shared/items'
   import { craftOf, forRace, grouped, knownSpells, trainerClass, vendorRows, whoOf, type Group } from '../../shared/npc-panel'
@@ -17,11 +18,12 @@
   import { lowestOf, type Listing } from '../../shared/ah'
 
   // listing: the prices of the auction house on show (M18-F8): beside a vendor's price, the lowest there for as many.
-  let { pin, sheets, shown, now, listing = null, onclose }: { pin: FixedPin; sheets: Sheets; shown: Known | null; now: number; listing?: Listing | null; onclose: () => void } = $props()
+  // onadd: puts a recipe on the shopping list of the character picked (M10-F4).
+  let { pin, sheets, shown, now, listing = null, onclose, onadd }: { pin: FixedPin; sheets: Sheets; shown: Known | null; now: number; listing?: Listing | null; onclose: () => void; onadd?: (item: number, spell: number) => void } = $props()
 
   // What the game says of the items and of the trainers, made beside the map (tiles-worker.ts).
   let items = $state.raw<ItemFacts | null>(null)
-  let trainers = $state.raw<TrainerFacts>({ format: 0, classes: {}, spells: {}, makes: {} })
+  let trainers = $state.raw<TrainerFacts>({ format: 0, classes: {}, spells: {}, makes: {}, crafts: {}, lines: {} })
   $effect(() => {
     const read = <T,>(file: string, set: (v: T) => void): void =>
       void fetch(`${TILES}/${file}`)
@@ -42,6 +44,8 @@
   const cls = $derived(pin.layers.includes('trainers') && !craft ? (reads.trainers.get(npc)?.c ?? trainerClass(pin.sub)) : null)
   const mine = $derived(!!cls && cls === who.class)
   const stand = $derived(craft ? craftOf(sheet, craft.profession, craft.ranks) : null)
+  // The profession and its ranks as the game names them in its language (shared/game-names.ts).
+  const profession = $derived(craft ? gameName(craft.profession) : '')
   const list = $derived.by(() => {
     if (!trainers.format) return null // not read yet: a list without the game's facts would show numbers for names
     if (craft && stand) return grouped(craft.rows, (r) => r.skill, stand.skill, stand.known)
@@ -64,7 +68,7 @@
   const foot = $derived.by(() => {
     if (!shown || !sheet) return t('items.npc.noCharacter')
     const name = firstName(shown.key)
-    if (craft) return t(stand?.read ? 'items.npc.recipesRead' : 'items.npc.recipesUnread', { name, profession: craft.profession })
+    if (craft) return t(stand?.read ? 'items.npc.recipesRead' : 'items.npc.recipesUnread', { name, profession })
     if (cls) return shown.live ? t('items.npc.spellsNow', { name, level: who.level ?? '?' }) : t('items.npc.spellsAsOf', { name, level: who.level ?? '?', ago: ago(sheet.at.spells ?? shown.seen, now) })
     return sheet.at.bank ? t('items.npc.bankSeen', { ago: ago(sheet.at.bank, now), name }) : t('items.npc.bankUnseen', { name })
   })
@@ -89,6 +93,10 @@
     {@render pic(picture(r))}
     <span class="name" style:color={color(r, open)}>{r.name}{#if r.rank}<span class="rank">{t('items.npc.rank', { rank: r.rank })}</span>{/if}</span>
     {#if r.talent}<span class="tag">{t('items.npc.talent')}</span>{:else if r.quest !== undefined}<span class="tag" title={r.quest ? t('items.npc.questTaught', { quest: r.quest }) : t('items.npc.classQuest')}>{t('items.npc.quest')}</span>{:else}{@render price(r.cost)}{/if}
+    {#if onadd && shown && made(r)}
+      {@const add = t('items.shopping.add', { item: r.name })}
+      <button class="plus" aria-label={add} title={add} onclick={() => onadd(made(r)!, r.spell)}>+</button>
+    {/if}
   </div>
 {/snippet}
 
@@ -118,10 +126,10 @@
   {#if craft && stand}
     <div class="skill">
       {#if stand.most}
-        {craft.profession} {stand.skill} / {stand.most}{stand.rank ? ` · ${stand.rank}` : ''}
+        {profession} {stand.skill} / {stand.most}{stand.rank ? ` · ${gameName(stand.rank)}` : ''}
         <div class="bar"><i style:width="{(100 * stand.skill) / stand.most}%"></i></div>
       {:else}
-        {t('items.npc.notLearned', { profession: craft.profession })}
+        {t('items.npc.notLearned', { profession })}
       {/if}
     </div>
   {/if}
@@ -135,7 +143,7 @@
           <h3 class="grp"><span>{t('items.npc.nextRank')}</span></h3>
           <div class="t">
             {@render pic(`${TILES}/pictures/${trainers.spells[stand.next.spell]?.[1] ?? 0}.png`)}
-            <span class="name">{stand.next.name} {craft.profession}<span class="rank">{t('items.npc.nextNeeds', { skill: stand.next.skill, level: stand.next.level })}</span></span>
+            <span class="name">{profession} · {gameName(stand.next.name)}<span class="rank">{t('items.npc.nextNeeds', { skill: stand.next.skill, level: stand.next.level })}</span></span>
             {@render price(stand.next.cost)}
           </div>
         </div>
@@ -149,6 +157,7 @@
     {/if}
     {#if goods.length}
       {#if list}<h3 class="grp"><span>{t('items.npc.sellsHeading', { count: goods.length })}</span></h3>{/if}
+      <div class="table">
       <div class="head"><span></span><span>{t('items.npc.columns.item')}</span><span>{t('items.npc.columns.price')}{#if listing}<small title={t('items.npc.ahNote')}>&nbsp;· {t('items.npc.columns.ah')}</small>{/if}</span><span>{t('items.npc.columns.bags')}</span><span>{t('items.npc.columns.bank')}</span></div>
       {#each goods as g (g.id)}
         <div class="r" class:two={!!listing} use:itemTip={{ item: g.id }}>
@@ -165,6 +174,7 @@
           <span class="own" class:zero={!g.bank}>{g.bank || '-'}</span>
         </div>
       {/each}
+      </div>
     {/if}
   </div>
   {#if list?.known.length}
@@ -263,9 +273,24 @@
     height: 31px;
     padding: 0 16px;
   }
-  .head,
-  .r {
-    grid-template-columns: 26px minmax(0, 1fr) 66px 30px 30px;
+  /* The price and the two counts are as wide as their longest text, never less than in English: in a longer language
+     the headers push the names, which end with dots, rather than run into each other. The narrow tracks at the two ends,
+     with the gaps, are the rows' own margins. */
+  .table {
+    display: grid;
+    grid-template-columns: 8px 26px minmax(0, 1fr) minmax(66px, max-content) minmax(30px, max-content) minmax(30px, max-content) 8px;
+    column-gap: 8px;
+  }
+  .table > .head,
+  .table > .r {
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .table > .head > :first-child,
+  .table > .r > :first-child {
+    grid-column: 2;
   }
   .head {
     display: grid;
@@ -285,6 +310,23 @@
   .t:hover,
   .r:hover {
     background: #ffffff0f;
+  }
+  /* The + of a recipe, after its price: shown on the row under the pointer, or reached with the keyboard. */
+  .t:has(.plus) {
+    grid-template-columns: 26px minmax(0, 1fr) auto auto;
+  }
+  .t .plus {
+    margin-left: -2px;
+    opacity: 0;
+  }
+  .t:hover .plus,
+  .t .plus:focus-visible {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .t .plus {
+      opacity: 1;
+    }
   }
   .name {
     overflow: hidden;

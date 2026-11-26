@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { unitsOfPlace, unitsOfWorld } from './geo'
 import type { GameMap } from './maps'
-import { iconOf, panelFor, resourceOf, serves, servicesOf, travel, TRAVEL_FORMAT, type FixedLayer, type FixedPin } from './services'
+import { gatherColour, iconOf, panelFor, resourceOf, serves, servicesOf, travel, TRAVEL_FORMAT, VESSELS, type FixedLayer, type FixedPin } from './services'
 import type { Row, Table } from './wdc5'
 
 // A table of the game, as far as these readers look at one: rows of columns, a column a value or a list.
@@ -25,14 +25,23 @@ test('the flags of an NPC say which services it offers', () => {
   expect(servicesOf(1 + 2 + 32), 'gossip, quests, a spirit healer: no service').toEqual([])
 })
 
-test('ore and herbs are told by their names, and nothing else is', () => {
-  expect(resourceOf('Copper Vein')).toBe('ore')
-  expect(resourceOf('Ooze Covered Mithril Deposit')).toBe('ore')
-  expect(resourceOf('Peacebloom')).toBe('herbs')
-  expect(resourceOf("Khadgar's Whisker")).toBe('herbs')
+test('ore and herbs are told by their English names, with their kind and the skill they ask, and nothing else is', () => {
+  expect(resourceOf('Copper Vein')).toEqual({ layer: 'ore', kind: 'copper', need: 1 })
+  expect(resourceOf('Ooze Covered Mithril Deposit')).toEqual({ layer: 'ore', kind: 'mithril', need: 175 })
+  expect(resourceOf('Small Thorium Vein')).toEqual({ layer: 'ore', kind: 'thorium', need: 245 })
+  expect(resourceOf('Ooze Covered Rich Thorium Vein')).toEqual({ layer: 'ore', kind: 'rich-thorium', need: 275 })
+  expect(resourceOf('Strange Vein'), 'a vein of no kind listed').toEqual({ layer: 'ore' })
+  expect(resourceOf('Peacebloom')).toEqual({ layer: 'herbs', kind: 'Peacebloom', need: 1 })
+  expect(resourceOf("Khadgar's Whisker")).toEqual({ layer: 'herbs', kind: "Khadgar's Whisker", need: 185 })
   expect(resourceOf('Jangolode Mine')).toBeNull()
   expect(resourceOf('Deepmoss Eggs')).toBeNull()
   expect(resourceOf('Veinous Thing')).toBeNull()
+})
+
+test('a node is red under the skill it asks, then orange, yellow, green, and grey a hundred points over it', () => {
+  // One that asks 1 is counted as 5, as the server does: grey at 105, not 101.
+  expect([0, 1, 29, 30, 55, 104, 105].map((skill) => gatherColour(1, skill))).toEqual(['red', 'orange', 'orange', 'yellow', 'green', 'green', 'grey'])
+  expect([124, 149, 174, 224, 225].map((skill) => gatherColour(125, skill))).toEqual(['red', 'orange', 'yellow', 'green', 'grey'])
 })
 
 test('a pin is for a side when it serves it, and for everyone while the side is not known', () => {
@@ -103,6 +112,55 @@ test('doors and flights come from the tables of the maps and of the flight paths
   expect(told.routes).toEqual([[0, 1]])
 })
 
+test('ships and zeppelins come from the points of their ways, each stop named as the game names its area', () => {
+  const areas = table([
+    { id: 392, cols: { 1: 'Ratchet' } },
+    { id: 35, cols: { 1: 'Bahía del Botín' } }, // in the game's language
+    { id: 1116, cols: { 1: 'Feathermoon Stronghold' } },
+    { id: 1108, cols: { 1: 'The Forgotten Coast' } },
+    { id: 279, cols: { 1: 'Dalaran' } },
+    { id: 16593, cols: { 1: 'Zephras Isle' } },
+  ])
+  let id = 0
+  const point = (path: number, world: number, x: number, y: number, flags = 0) => ({ id: ++id, parent: path, cols: { 0: [x, y, 0], 3: id, 4: world, 5: flags } })
+  const points = table([
+    // Ratchet to Booty Bay across the sea: out of Kalimdor, into the Eastern Kingdoms, and back.
+    point(241, 1, -1000, -3900), point(241, 1, -1006, -3842, 2), point(241, 1, -1100, -3700),
+    point(241, 0, -14200, 500), point(241, 0, -14278, 583, 2), point(241, 0, -14200, 450),
+    point(241, 1, -1050, -3950),
+    // The ferry of Feathermoon stops where it began, again: one stop.
+    point(303, 1, -4197, 3287, 2), point(303, 1, -4348, 2444, 2), point(303, 1, -4197, 3287, 2),
+    // Dalaran to Zephras Isle, a world the map does not draw: its stop has a name and no place.
+    point(11398, 0, 466, 64), point(11398, 0, 545, 424, 2), point(11398, 0, 488, 559), point(11398, 2991, 1848, 569, 2), point(11398, 2991, 1800, 600),
+    // A way whose stops are not as many as the list names: the game changed it, left out.
+    point(285, 0, -12464, 232, 2),
+  ])
+  const told = travel(table([]), table([]), table([]), [], points, areas).vessels!
+  const at = (x: number, y: number): [number, number] => { const u = unitsOfWorld(x, y); return [u.x, u.y] }
+  expect(told.map((v) => `${v.kind} ${v.side}: ${v.stops.map((s) => `${s.name} (${s.continent})`).join(', ')}`)).toEqual([
+    'ship AH: Ratchet (1), Bahía del Botín (0)',
+    'ship A: Feathermoon Stronghold (1), The Forgotten Coast (1)',
+    'zeppelin A: Dalaran (0), Zephras Isle (null)',
+  ])
+  expect(told[0]!.way).toEqual([
+    { continent: 1, points: [at(-1000, -3900), at(-1006, -3842), at(-1100, -3700)] },
+    { continent: 0, points: [at(-14200, 500), at(-14278, 583), at(-14200, 450)] },
+  ])
+  expect(told[0]!.stops[1]).toEqual({ continent: 0, ...unitsOfWorld(-14278, 583), name: 'Bahía del Botín' })
+  expect(told[2]!.way).toEqual([{ continent: 0, points: [at(466, 64), at(545, 424), at(488, 559)] }])
+  // Without the two tables there are no ships, and the rest is there all the same.
+  expect(travel(table([]), table([]), table([])).vessels).toEqual([])
+})
+
+test('the list of ships and zeppelins: ten crossings between the continents, as design/ships/elenco.md counts them', () => {
+  // Zephras Isle (16593) is a world of its own. Each leg between two stops on two of them is one crossing.
+  const WORLD: Record<number, number> = { 150: 0, 513: 1, 271: 0, 442: 1, 17203: 0, 392: 1, 35: 0, 977: 1, 16727: 0, 702: 1, 1116: 1, 1108: 1, 1637: 1, 1497: 0, 117: 0, 279: 0, 16593: 2, 17045: 1 }
+  const legs = VESSELS.flatMap((v) => v.stops.map((a, i) => [a, v.stops[(i + 1) % v.stops.length]!] as const).slice(0, v.stops.length === 2 ? 1 : undefined))
+  expect(legs.filter(([a, b]) => WORLD[a] !== WORLD[b])).toHaveLength(10)
+  expect(new Set(VESSELS.map((v) => v.path)).size).toBe(VESSELS.length)
+  for (const v of VESSELS) expect(v.stops.every((s) => s in WORLD) && ['A', 'H', 'AH'].includes(v.side)).toBe(true)
+})
+
 test('a pin takes the picture of what it is', () => {
   const pin = (name: string, layers: FixedLayer[], sub?: string) => ({ name, layers, sub })
   expect(iconOf(pin('Dungar Longdrink', ['flight'], 'Gryphon Master'))).toBe('flight')
@@ -113,9 +171,11 @@ test('a pin takes the picture of what it is', () => {
   expect(iconOf(pin('Tannysa', ['trainers'], 'Herbalism Trainer'))).toBe('profession')
   expect(iconOf(pin('Jasper Fel', ['vendors'], 'Shady Dealer'))).toBe('vendors')
   expect(iconOf(pin('Lina Stover', ['vendors'], 'Bow & Arrow Merchant'))).toBe('ammunition')
-  expect(iconOf(pin('Copper Vein', ['ore']))).toBe('ore-copper')
-  expect(iconOf(pin('Ooze Covered Truesilver Deposit', ['ore']))).toBe('ore-truesilver')
-  expect(iconOf(pin('Dark Iron Deposit', ['ore']))).toBe('ore-dark-iron')
+  // A vein by its kind, not by its name, which is in the game's language.
+  expect(iconOf({ layers: ['ore'], kind: 'copper' })).toBe('ore-copper')
+  expect(iconOf({ layers: ['ore'], kind: 'dark-iron' })).toBe('ore-dark-iron')
   expect(iconOf(pin('Strange Vein', ['ore']))).toBe('ore')
-  expect(iconOf(pin('Peacebloom', ['herbs']))).toBe('herbs')
+  // A herb by its own icon; one of no kind listed by the cursor.
+  expect(iconOf({ layers: ['herbs'], kind: "Khadgar's Whisker" })).toBe('herb-khadgars-whisker')
+  expect(iconOf(pin('Strange Weed', ['herbs']))).toBe('herbs')
 })

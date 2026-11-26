@@ -16,6 +16,31 @@ export default {
     // On a cross that closes a window or panel, read aloud only.
     close: 'Close',
   },
+  // A distance with its unit, after a number as the language writes it ({n}: 1,335). Metres only when the player
+  // chose them, in a language whose game counts in yards (English, Chinese): the game's other languages write m.
+  units: {
+    yards: '{n} yd',
+    metres: '{n} m',
+  },
+  // What's new (WhatsNew.svelte): the news of the versions the player updated past, once as the app starts after an
+  // update, and again from Settings. The news themselves are the release's text (shared/news.ts), not keys.
+  news: {
+    // The window's title.
+    title: "What's new in Twinmap",
+    // Under the title. {version}: the version the player had before, as 0.16.1.
+    updatedFrom: 'Updated from {version}.',
+    // Under the title, after updatedFrom. {settings}: the name of Settings (app.top.settings); {button}: news.button.
+    again: '{settings}, {button}, shows this again.',
+    // The button in Settings, in the group of the app's version, that opens the window: short.
+    button: "What's new",
+    // Small headings in a version: the changes, then the fixes, after its new things (which have none).
+    changed: 'Changed',
+    fixed: 'Fixed',
+    // The one button that closes the window: short.
+    done: 'Got it',
+    // A link at the end of an entry, to what it tells of. {name}: a tab (Now, Items, Auction House), Settings or Layers, as the app names them.
+    goTo: 'Open {name}',
+  },
 
   // The window that asks once, after the first run, to join the participation programme (Participate.svelte).
   participate: {
@@ -29,6 +54,27 @@ export default {
     // The two buttons, side by side, the same size: short.
     yes: 'Yes, share',
     no: 'No thanks',
+  },
+  // The choice of the language: the first page of the first run (FirstRun.svelte), the window asked once after the
+  // update to a version that speaks it (LangAsk.svelte), and its group in Settings. Each language is listed in its own
+  // words (shared/i18n, PLANNED), never translated.
+  language: {
+    // The first run's step, in the row of steps: one word.
+    step: 'Language',
+    // The title of the first run's page.
+    title: 'Choose your language',
+    intro: 'The language of Twinmap. Names that come from the game (zones, NPCs, items) stay in the language of your game.',
+    // Small, beside the name of the language the game is in.
+    game: 'the language of your game',
+    later: 'You can change it at any time in Settings.',
+    // The window after the update: its title and what it asks.
+    newTitle: 'Twinmap now speaks your language',
+    newIntro: 'Choose the language of Twinmap. Without a choice it stays in English.',
+    // Its button: short.
+    done: 'Done',
+    // In Settings > General: the label before the list, and the line under it.
+    label: 'Language of Twinmap',
+    hint: 'Changes at once. Names that come from the game stay in the language of the game.',
   },
   app,
   map,
