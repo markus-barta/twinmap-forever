@@ -11,7 +11,7 @@ on:
 
 permissions:
   contents: write
-  actions: read # the release reads the CI runs of its commit
+  actions: write # the release reads the CI runs of its commit, and starts Mac app
 
 jobs:
   release:
@@ -105,6 +105,15 @@ jobs:
             "dist/Twinmap-Setup-$VERSION.exe" "dist/Twinmap-Setup-$VERSION.exe.blockmap" $UPDATE_FILES dist/Twinmap-Setup.exe \
             "dist/addon/TwinmapForever-$VERSION.zip" dist/addon/release.json
 
+      # The Mac app comes from markus-barta's fork about twenty minutes after the release (mac-app.yml): started
+      # here, Mac app waits for it and attaches it as soon as it is there. Its schedule stays as the fallback.
+      # A pre-release gets no Mac app.
+      - name: Start Mac app
+        continue-on-error: true
+        run: |
+          case "$VERSION" in *-*) exit 0 ;; esac
+          gh workflow run mac-app.yml -R "$GITHUB_REPOSITORY" --ref main -f tag="$GITHUB_REF_NAME" -f wait=60
+
       # The result goes into the release notes, and into virustotal.json for the badge of the README and of the site.
       # A scan that fails does not take the release back: it is published already.
       - name: Scan the installer with VirusTotal
@@ -151,3 +160,33 @@ jobs:
             exit 0
           fi
           node scripts/curseforge.js "dist/addon/TwinmapForever-$VERSION.zip" ../addon/TwinmapForever/TwinmapForever.toc "$VERSION" notes.md
+
+  # The Linux app, built on Linux once the release is there: the AppImage under the one name the download buttons
+  # point to (releases/latest/download/Twinmap-linux-x86_64.AppImage), then latest-linux.yml, from which the
+  # AppImages already on a machine update themselves. Attached after the AppImage, so it never names a file that is
+  # not there yet. The release is published already: a Linux build that fails does not take it back.
+  linux:
+    needs: release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Build the AppImage
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npx electron-vite build
+          npx electron-builder --linux AppImage --x64 --publish never -c.extraMetadata.version="$VERSION"
+      - name: Attach it to the release
+        run: |
+          gh release upload "$GITHUB_REF_NAME" dist/Twinmap-linux-x86_64.AppImage
+          gh release upload "$GITHUB_REF_NAME" dist/latest-linux.yml
